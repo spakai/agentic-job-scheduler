@@ -1,6 +1,6 @@
 # L01: Validate main and retry job envelopes
 
-Status: user review accepted; PR preparation
+Status: user review accepted; [PR #1](https://github.com/spakai/agentic-job-scheduler/pull/1) open
 
 ## Scope and plan
 
@@ -77,11 +77,11 @@ Status: user review accepted; PR preparation
 - Implementation commit `9c25206` was pushed to `feat/l01-envelope-validation`.
   Base is `eda1b72953690f2558031e4ce90f6bb49a14c1e2`; evaluated source hashes
   remain in the evidence file as a historical build snapshot. This follow-up
-  changes documentation only. PR preparation follows; merge is pending.
+  changes documentation only. PR #1 is open; merge is pending.
 - Remaining gaps: partition metadata/routing, actual DLQ publication, configured
   topic checks, Kafka consumption, limiter, retries, external handler behavior,
   security scanning, and CI. No Vert.x dependency is needed for pure validation.
-- Next concrete step: open the L01 PR against main and retain its review history.
+- Next concrete step: complete PR #1 review/merge disposition and retain its history.
   Later integration connects this validator to Kafka routing and DLQ behavior.
 
 ## Learning check
