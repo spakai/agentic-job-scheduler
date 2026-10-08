@@ -179,8 +179,8 @@ grant broad permissions merely to make a failing workflow turn green.
 | --- | --- |
 | Kafka architectural specification | Simplified for immediate main/retry processing; runtime not implemented |
 | Learning workflow and templates | Written; exercises not yet run |
-| Runtime implementation / Maven build | Not started |
-| Actual automated evaluations and scans | Not run |
+| Runtime implementation / Maven build | L01 Maven foundation and validators implemented; worker runtime pending |
+| Actual automated evaluations and scans | L01 unit validation executed; integration tests and scans pending |
 | Copilot/MCP setup and permissions exercise | Not verified |
 | Fresh-session memory exercise | Not run |
 | Multi-agent exercise | Not run |
@@ -189,3 +189,5 @@ grant broad permissions merely to make a failing workflow turn green.
 Update this ledger with evidence links as exercises finish. Read the official
 study guide again before exam preparation to catch changed objectives and topics
 not exercised here.
+
+First implementation evidence: [L01 task record](tasks/L01-envelope-validation.md).

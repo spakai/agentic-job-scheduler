@@ -1,6 +1,6 @@
 # Spec 002: Immediate Kafka job processing with slower retries
 
-Status: **Draft — simplified architecture agreed; implementation pending**
+Status: **Draft — simplified architecture agreed; L01 validation implemented for review, worker runtime pending**
 
 Project: `agentic-job-scheduler`
 Date: 2026-10-08
@@ -114,6 +114,23 @@ and next attempt, original source identity, and a bounded error code. Validate
 retry attempt in 2..maxAttempts. Preserve the original job and execution IDs.
 Do not recursively nest retry envelopes. Reserve at least 512 KiB for internal
 records and align producer/broker/consumer limits accordingly.
+
+L01 makes the retry wire fields concrete: top-level `schemaVersion`, `job`,
+`attempt`, `handoffId`, `originalSource`, `failedSource`, and `errorCode` are
+required, with no unknown fields. `job` is the normalized main envelope, including
+explicit maxAttempts. Each source has `topic` (Kafka topic name), `partition`
+(nonnegative 32-bit integer), and `offset` (nonnegative 64-bit integer).
+originalSource stays unchanged; failedSource identifies the record that just
+failed. They must match for attempt 2. handoffId is lowercase SHA-256 hex over
+UTF-8 `failedSource.topic + "\n" + partition + "\n" + offset + "\n" + attempt`,
+using newline separators and no final newline. errorCode matches
+`[A-Z][A-Z0-9_]{0,63}`. Later integration checks configured topic/partition routing.
+
+All envelope UUIDs use canonical lowercase form. Validation rejects duplicate
+JSON properties, trailing content, malformed UTF-8, and type coercions. Parsing
+is bounded to 100 main nesting levels (101 for the retry wrapper) and 1,000
+characters per numeric token; size
+limits apply to raw UTF-8 bytes. Error diagnostics contain codes, not raw input.
 
 ## 5. Immediate execution and completion
 
@@ -291,8 +308,8 @@ integration tests require Docker and must fail clearly if unavailable.
 
 Unit tests cover validation, queue exclusion, completion frontiers, limiter windows,
 retry rate/attempt calculations, and envelope bounds. Integration tests establish
-Kafka handoff and replay behavior. No runtime tests have run; implementation is
-still pending.
+Kafka handoff and replay behavior. L01 has unit validation tests; Kafka handoff,
+DLQ publication, partition routing, and worker-runtime tests remain pending.
 
 ## 12. GH-600 learning workflow
 
@@ -333,6 +350,7 @@ task records, and transient exploration out of durable guidance. Revalidate
 handoffs against the current commit. Preserve failed experiments and their
 corrections as evidence; never invent a successful run to fill a learning row.
 
-Current learning status: architecture/specification artifacts exist; application
-implementation, automated evaluations, MCP configuration verification, multi-agent
-exercises, and GitHub enforcement controls have not yet been demonstrated.
+Current learning status: architecture/specification artifacts and L01's Maven
+foundation and unit validation exist. Worker runtime, integration evaluations,
+MCP configuration verification, multi-agent exercises, and GitHub enforcement
+controls have not yet been demonstrated. See the [L01 task record](../docs/tasks/L01-envelope-validation.md).
