@@ -364,3 +364,46 @@ windows, jitter bounds, retry classification, state-version guards, and bounded
 DLQ encoding. Integration tests establish transaction and recovery guarantees.
 Record checks actually run during implementation; this document does not claim
 an implementation or passing runtime tests.
+
+## 12. GH-600 learning workflow
+
+This project is a practical exercise in supervising coding agents. The Kafka
+service supplies concrete engineering tasks; its workers, retries, and stored
+job state do not themselves demonstrate AI-agent coordination or memory.
+Use the [learning guide](../docs/gh-600-learning-guide.md) alongside implementation.
+The mapping is based on the [official GH-600 study guide](https://learn.microsoft.com/en-us/credentials/certifications/resources/study-guides/gh-600),
+checked on 2026-10-08. It is not a claim of complete exam preparation.
+
+For each small implementation task, retain the requirement, bounded plan,
+acceptance IDs, diff, actual test/scan results, review findings, and final outcome.
+Start with the [task record template](../docs/templates/task-record.md). Proposed
+checks must remain distinguishable from executed checks. Use branches and PRs
+for implementation exercises; GitHub checks and review controls must be configured
+and verified before claiming they enforce a gate.
+
+| Exercise | Implementation focus | Learning evidence |
+| --- | --- | --- |
+| L01 | Command validation and identity; B05/B17 | Reviewed plan, scoped patch, positive/negative cases |
+| L02 | Durable admission; B01 | Tool/permission inventory, Kafka transaction fault test |
+| L03 | Due times and per-job ordering; B02–B04 | Durable handoff, fresh-session resumption, concurrency trace |
+| L04 | Retry/DLQ and limiter; B06–B08/B13 | Deliberately failing case, root cause, revised instruction, rerun |
+| L05 | Restoration and fencing; B09–B12 | Isolated implementer/reviewer exercise with handoff and conflict resolution |
+| L06 | Backpressure and recovery; B14–B20 | CI/scanning artifacts, restricted agent-in-CI exercise, PR review evidence |
+
+These are learning increments, not a claim that each row independently delivers
+the whole runtime. Establish build/test scaffolding first; introduce dependencies
+as needed without pretending incomplete components are production-ready.
+
+Exercise completion requires the learner to explain the invariant and failure
+case, inspect the diff, and locate evidence for the result. A useful first
+question is: why can job A and job B run together while two executions of job A
+cannot, even while A is retrying?
+
+Keep project direction and reusable instructions in AGENTS.md, task progress in
+task records, and transient exploration out of durable guidance. Revalidate
+handoffs against the current commit. Preserve failed experiments and their
+corrections as evidence; never invent a successful run to fill a learning row.
+
+Current learning status: architecture/specification artifacts exist; application
+implementation, automated evaluations, MCP configuration verification, multi-agent
+exercises, and GitHub enforcement controls have not yet been demonstrated.
