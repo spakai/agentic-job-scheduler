@@ -1,6 +1,6 @@
 # Learning GH-600 through this project
 
-We are building a Kafka scheduler while learning how to supervise coding agents.
+We are building an immediate Kafka worker service while learning how to supervise coding agents.
 Your role is to set a concrete outcome, understand the critical invariant, and
 judge evidence before accepting work. The agent can investigate, implement,
 test, and prepare a review; its confident description is not proof of correctness.
@@ -27,35 +27,37 @@ These are learning targets. None is complete just because this table exists.
 
 “Same jobs must not overlap” needs precise identities. In our spec, jobId names
 a serial lane and executionId names one invocation. Repeating an invocation is
-a duplicate; a different invocation with the same jobId must wait its turn.
+a duplicate; a different invocation with the same jobId must wait its turn within
+the same topic. The service does not durably deduplicate invocations.
 
 Consider A1 and A2 with jobId A, and B1 with jobId B. A1 and B1 may run together.
-A2 waits until A1 has a durable terminal outcome. If A1 enters retry backoff,
-A2 still waits. This is a concrete rule that an agent can implement and a test
-can disprove.
+A2 waits until A1 succeeds or its retry/DLQ handoff is acknowledged. Once A1
+is handed to the retry topic, A2 can start in the main worker, even while a retry
+worker runs A1. The simpler spec deliberately allows this cross-topic overlap.
 
 The test should hold A1 behind a controlled barrier, verify B1 starts, and verify
 A2 has not started. Release A1 and check A2 starts afterward. Extend it with an
-A1 retry. Avoid an arbitrary sleep that merely makes an overlap less likely.
+A1 retry handoff and verify the allowed cross-topic overlap. Avoid an arbitrary
+sleep that merely makes an overlap less likely.
 
-**Your check:** if A1 fails and its retry goes to another consumer, what prevents
-A2 and the retry running together? The answer must refer to the canonical
-command owner and shared per-job gate, not merely to matching Kafka keys.
+**Your check:** can A2 run while another pod retries A1? Yes: each topic has its
+own ownership and per-job gate. Matching keys across topics do not create a
+global lock. This boundary must be visible in tests and handler requirements.
 
 This lesson is about evaluating an agent's interpretation of a requirement.
 The Kafka behavior supplies the example.
 
 ## Lesson 2: plan a small change and inspect its evidence
 
-Start implementation with command identity/validation (L01), after establishing
+Start implementation with envelope validation (L01), after establishing
 the Maven skeleton. Copy the [task template](templates/task-record.md) into
-`docs/tasks/` with a descriptive filename. Record the relevant B05/B17 cases.
+`docs/tasks/` with a descriptive filename. Record the relevant B01/B17 cases.
 
 A useful task request is:
 
-> Implement the Spec 002 command validator and canonical identity comparison.
-> Cover valid input, mismatched jobId/key, and conflicting content under one
-> identity. Keep Kafka execution and persistence out of this change. State the
+> Implement the Spec 002 main and retry envelope validators.
+> Cover valid input, mismatched jobId/key, forbidden scheduledAt, and invalid
+> retry attempt values. Keep handler execution out of this change. State the
 > plan, implement within that scope, run the relevant checks, and report evidence.
 
 Separate plan review from patch review. A plan can be sound while the code is
@@ -94,7 +96,9 @@ session using that record plus the spec and diff.
 
 Use the PostgreSQL-to-Kafka architecture change as a drift exercise: supply the
 historical Spec 001 alongside the current Spec 002 and verify the agent resolves
-the supersession correctly. An agent that adds Flyway has used stale context.
+the supersession correctly. Also check the simplified Spec 002 against its
+earlier Git version: delayed jobs and RocksDB were removed, and cross-topic
+ordering was relaxed. An agent that adds those features has used stale context.
 Record and correct the instruction or handoff that allowed the mistake.
 
 Keep reusable invariants in AGENTS.md, temporary progress in task records, and
@@ -106,13 +110,13 @@ decisions as superseded. Never make stale context authoritative by repetition.
 
 ## Lesson 5: evaluate the agent, then improve its workflow
 
-For L04, deliberately challenge a claim: duplicate retry tokens, conflicting
-execution IDs, or an adaptive limiter that exceeds its configured maximum.
+For L04, deliberately challenge a claim: duplicate retry handoffs, premature
+offset commits, or an adaptive limiter that exceeds its configured maximum.
 Use controlled synthetic faults, never production data.
 
 When a test fails, distinguish a wrong requirement interpretation, wrong code,
 tool misuse, stale context, and environment failure. A missing Docker daemon
-does not prove that a transaction algorithm is wrong or correct.
+does not prove that a handoff/offset algorithm is wrong or correct.
 
 Record the initial reproduction, root cause, correction, and rerun. Where the
 failure reveals a repeatable agent mistake, improve an instruction or task
@@ -173,7 +177,7 @@ grant broad permissions merely to make a failing workflow turn green.
 
 | Item | Current status |
 | --- | --- |
-| Kafka architectural specification | Written; committed before this guide |
+| Kafka architectural specification | Simplified for immediate main/retry processing; runtime not implemented |
 | Learning workflow and templates | Written; exercises not yet run |
 | Runtime implementation / Maven build | Not started |
 | Actual automated evaluations and scans | Not run |

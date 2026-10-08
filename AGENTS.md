@@ -4,13 +4,16 @@
 
 Read `specs/002-kafka-job-scheduling.md` for the current architecture. Spec 001 is
 historical and must not reintroduce PostgreSQL, Flyway, or its REST API into the
-current scheduler. Kafka is the scheduling authority. EDR is deferred.
+current worker service. Kafka records and consumer offsets retain pending work.
+There are no delayed jobs, scheduling state topic, or RocksDB indexes. EDR is deferred.
 
-Preserve these invariants: one execution per jobId at a time under an owner;
-different IDs may run concurrently; retries cannot bypass the same-job queue;
-admitted work is recoverable from Kafka; external effects require the handler
-contract described in Spec 002. Do not claim Kafka fencing stops arbitrary
-external effects.
+Preserve these invariants: one execution per jobId at a time within each topic
+under stable ownership; different IDs may run concurrently; main and slower retry
+workers are independent and may overlap for the same jobId. Commit only completed
+record prefixes, after success or acknowledged retry/DLQ handoff. Replay and
+duplicate handoffs are possible. Handlers must satisfy Spec 002's replay and
+concurrency contract. Do not claim global ordering, durable deduplication, or
+external-effect fencing. Retry workers consume their own topic directly.
 
 ## Work in small, reviewable increments
 
