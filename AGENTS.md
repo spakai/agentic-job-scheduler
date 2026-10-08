@@ -30,10 +30,11 @@ Follow explicit user instructions concerning commit, push, merge, or deployment.
 
 ## Verification and evidence
 
-The repository currently contains specifications and learning materials only.
-There is no Maven build yet. Once introduced, the intended commands are
-`mvn test` for unit tests and `mvn verify` for integration tests with real Kafka
-and Docker. Do not report them as passing before the build and tests exist.
+The repository has a Java 21 Maven build and L01 envelope-validation unit tests.
+Run `mvn test` for unit tests and `mvn package` for the library artifact. There
+is no worker runtime or Kafka integration suite yet; `mvn verify` currently adds
+no integration coverage. Later integration tests will require real Kafka and
+Docker. Do not report absent tests as passing.
 
 Test observable invariants and crash boundaries, not just private implementation
 details. Record command, commit, outcome, and evidence location. A planned check,

@@ -1,0 +1,19 @@
+L01 validation evidence — 2026-10-08
+Branch: feat/l01-envelope-validation
+Base commit: eda1b72953690f2558031e4ce90f6bb49a14c1e2; uncommitted L01 working tree
+Environment: OpenJDK 21.0.12.1, Maven 3.6.3
+Command: mvn -B -ntp clean package
+Result: BUILD SUCCESS
+JUnit: tests=77, failures=0, errors=0, skipped=0
+Class-file major version: 65 (Java 21)
+Raw reports: target/surefire-reports/ (generated, ignored; regenerate with Maven)
+Kafka integration and security scanning: not run
+
+SHA-256 of evaluated build/source inputs:
+ac6e1a1445603bce75274ffd1d0e4ca4aad0b4aa6872ca21f1f972d2206c99ed  pom.xml
+1c2e7a51df026a81a8f2e356b7994fbadcbed956f72157987b9dfb15a9f04359  src/main/java/com/example/agenticjobscheduler/messaging/EnvelopeValidationException.java
+dac045b68a9a2f12da2c27afd5bca18c5af8f06c0b0d36eda4779e3dab092c30  src/main/java/com/example/agenticjobscheduler/messaging/EnvelopeValidator.java
+e71b6fe1dec6f50e338a519f8c92339fb26ba9029f0e61712ecb1425066e75d2  src/main/java/com/example/agenticjobscheduler/messaging/JobEnvelope.java
+27f08ca4da6ce765630a99a66025eee7fa539a4626072d4a6077c5e2fc7a697a  src/main/java/com/example/agenticjobscheduler/messaging/RetryEnvelope.java
+e0b88785de23b282d248a6a892dbe00e4782d75f7b8d04925cb94cfc178b25bf  src/main/java/com/example/agenticjobscheduler/messaging/SourceRecord.java
+5c9d4d4d850f0223ca6e97b36c38f6b6aa8126b3136cfbd98ef35eb4cf7f7421  src/test/java/com/example/agenticjobscheduler/messaging/EnvelopeValidatorTest.java
