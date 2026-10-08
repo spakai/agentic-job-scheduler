@@ -1,6 +1,6 @@
 # L01: Validate main and retry job envelopes
 
-Status: ready for review
+Status: user review accepted; PR preparation
 
 ## Scope and plan
 
@@ -25,8 +25,9 @@ Status: ready for review
 - Local shell/Git edits this repository; Maven resolves dependencies and runs tests.
 - Official release documentation verifies pinned dependency choices.
 - Available: OpenJDK 21.0.12.1 and Maven 3.6.3. No Docker needed for unit tests.
-- No remote write, MCP configuration, branch protection, or CI enforcement is
-  part of this exercise. No restricted-tool boundary has been demonstrated.
+- Implementation initially used local tools. The user subsequently authorized
+  commit/push and PR preparation. MCP configuration, branch protection, and CI
+  enforcement remain unverified; no restricted-tool boundary is demonstrated.
 
 ## Progress and decisions
 
@@ -68,18 +69,20 @@ Status: ready for review
 - Implemented five messaging classes and one JUnit test class (77 executed cases),
   with pinned Java 21/Maven build and README instructions. Updated current-spec
   wire details and repository/learning status; no deferred runtime was added.
-- Review performed by the implementing agent; no independent reviewer yet.
+- Implementing-agent self-review completed. On 2026-10-08 the user accepted
+  the review ("looks good, go ahead") and authorized task cleanup and PR preparation.
+  No separate automated reviewer or GitHub approval is claimed.
 - Review focus: exact retry wire names and hashing convention, strict rejection
   behavior, and the distinction between unit validation and full B17 coverage.
-- Base remains `eda1b72953690f2558031e4ce90f6bb49a14c1e2`; evaluated source hashes
-  are recorded in the evidence file. All changes are uncommitted on the feature
-  branch. No push or PR was performed.
+- Implementation commit `9c25206` was pushed to `feat/l01-envelope-validation`.
+  Base is `eda1b72953690f2558031e4ce90f6bb49a14c1e2`; evaluated source hashes
+  remain in the evidence file as a historical build snapshot. This follow-up
+  changes documentation only. PR preparation follows; merge is pending.
 - Remaining gaps: partition metadata/routing, actual DLQ publication, configured
   topic checks, Kafka consumption, limiter, retries, external handler behavior,
   security scanning, and CI. No Vert.x dependency is needed for pure validation.
-- Next concrete step: user reviews the validator, tests, and wire clarification;
-  then commit the reviewed L01 increment when requested. Later integration connects
-  this validator to Kafka routing and DLQ behavior.
+- Next concrete step: open the L01 PR against main and retain its review history.
+  Later integration connects this validator to Kafka routing and DLQ behavior.
 
 ## Learning check
 
