@@ -1,6 +1,6 @@
 # CI01: Run existing Maven checks on GitHub
 
-Status: in progress
+Status: ready for review; PR workflow verified
 
 ## Scope and plan
 
@@ -26,6 +26,7 @@ Status: in progress
   2026-10-10: checkout v7.0.1, setup-java v6.0.1, upload-artifact v7.0.2.
 - Official references: https://github.com/actions/checkout,
   https://github.com/actions/setup-java, https://github.com/actions/upload-artifact.
+- Repository Actions API reports enabled=true and allowed_actions=all.
 - Branch protections/rulesets remain unverified. A workflow alone does not block merging.
 
 ## Progress and decisions
@@ -40,7 +41,7 @@ Status: in progress
 | Check | Revision | Command/workflow | Result | Evidence |
 | --- | --- | --- | --- | --- |
 | Unit/package | `d612d57` + workflow/docs | `mvn -B -ntp test`; `mvn -B -ntp package` | passed: 94 tests each, no failures/errors/skips | local Surefire reports; baseline commands repeated in CI |
-| Real PR run | pending | Maven CI | pending | pending |
+| Real PR run | `1287b33` | Maven CI | passed: 94 tests, 0 failures/errors/skips; reports and JAR uploaded | [run 38018147651](https://github.com/spakai/agentic-job-scheduler/actions/runs/38018147651) |
 | Controlled failure | `beea4e2` | temporary failing test | expected failure: 95 tests, one intentional failure; reports uploaded, JAR skipped | [run 38018094448](https://github.com/spakai/agentic-job-scheduler/actions/runs/38018094448) |
 | Kafka/security scans | n/a | n/a | not run | out of scope |
 
@@ -54,8 +55,15 @@ Status: in progress
 
 ## Handoff and review
 
-- [PR #3](https://github.com/spakai/agentic-job-scheduler/pull/3) created as draft
-  while the negative probe was present. Next: verify final passing run and mark ready.
+- [PR #3](https://github.com/spakai/agentic-job-scheduler/pull/3) contains the workflow
+  and documentation; the temporary test is absent from the final diff.
+- Verified `1287b33`: downloaded both positive-run artifacts, parsed Surefire XML
+  (94 tests, no failures/errors/skips), and inspected the JAR for OffsetCommitTracker.
+  The negative-run XML totals 95 tests with exactly one deliberate failure.
+- This follow-up records evidence only; workflow and application source are unchanged.
+  Next: review/merge PR #3, then verify the push-to-main trigger after merge.
+- Pull-request execution is demonstrated; push-to-main is configured but not yet
+  exercised. No merge or required-check configuration performed.
 - No production runtime code changes intended. L03 remains a separate increment.
 
 ## Learning check
