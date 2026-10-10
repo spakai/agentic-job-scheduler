@@ -1,6 +1,6 @@
 # Spec 002: Immediate Kafka job processing with slower retries
 
-Status: **Draft — simplified architecture agreed; L01–L03 validation, completion/offset, and Vert.x dispatcher components implemented; executable Kafka worker pending**
+Status: **Draft — simplified architecture agreed; L01–L06 library components and one broker-backed B14 check implemented; executable Kafka worker and full integration acceptance pending**
 
 Project: `agentic-job-scheduler`
 Date: 2026-10-08
@@ -307,13 +307,16 @@ integration tests require Docker and must fail clearly if unavailable.
 | B20 | Compose demonstrates main/retry workers, DLQ, and replay without database/state store |
 
 Unit tests cover validation, queue exclusion, completion frontiers, limiter windows,
-retry rate/attempt calculations, and envelope bounds. Integration tests establish
-Kafka handoff and replay behavior. L01 has unit validation tests; L02 has bounded
-completion/commit state-machine tests and simulated crash/replay tests. Kafka
-handoff, actual commits, DLQ publication, partition routing, and full worker-runtime
-tests remain pending. L03 adds real Vert.x context tests for immediate dispatch,
-per-topic exclusion, concurrent different IDs, and controlled main/retry overlap;
-these establish component behavior, not broker integration acceptance.
+retry rate/attempt calculations, envelope bounds, and L06 count/byte watermark
+behavior. One Testcontainers integration test uses a Kafka consumer to pause a
+partition, continue polling, commit, release window reservations, and resume.
+It does not exercise a Vert.x worker adapter. L01 has unit validation tests; L02
+has bounded completion/commit state-machine tests and simulated crash/replay tests.
+Kafka handoff, retry/DLQ publication, partition routing, broker outage/restart,
+and full worker-runtime acceptance remain pending. L03 adds real Vert.x context
+tests for immediate dispatch, per-topic exclusion, concurrent different IDs, and
+controlled main/retry overlap; these establish component behavior, not broker
+integration acceptance.
 
 ## 12. GH-600 learning workflow
 

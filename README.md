@@ -2,18 +2,20 @@
 
 A Java 21 learning project for immediate Kafka job processing and GH-600 agent
 supervision. [Spec 002](specs/002-kafka-job-scheduling.md) defines the intended
-worker service. **Currently implemented: L01 envelope validation, L02 completion/
-offset tracking, and L03 Vert.x immediate dispatch as library components.**
-There is no executable Kafka worker, Kafka consumer, adaptive limiter, or DLQ publisher yet.
+worker service. **Currently implemented:** L01 envelope validation, L02 completion/
+offset tracking, L03 Vert.x immediate dispatch, L04 failure classification and
+adaptive limiter policy, L05 local ownership invalidation, and an L06 bounded
+retained-work window as library components. There is still no executable Kafka
+worker, Kafka consumer/publisher, or DLQ publisher.
 
-See [Architecture through L01–L03](arch.md) for ASCII diagrams of topic ownership,
-per-job queues, safe commits, and the 108-test coverage summary.
+See [Architecture through L06 component work](arch.md) for diagrams of topic
+ownership, per-job queues, safe commits, and the library/runtime boundary.
 
 ## Build and test
 
 Requirements: JDK 21 or newer and Maven 3.6.3 or newer. Compilation targets Java
-21. Maven needs access to Maven Central on the first build; Docker is not required
-for this increment.
+21. Maven needs access to Maven Central on the first build. Docker is required by
+`mvn verify` for the broker-backed L06 integration test.
 
 ```sh
 mvn test
@@ -22,8 +24,10 @@ mvn package
 
 Unit results are in `target/surefire-reports/`. Packaging produces
 `target/agentic-job-scheduler-0.1.0-SNAPSHOT.jar`, a library without an executable
-main class. `mvn verify` currently runs the same unit/package lifecycle; no Kafka
-integration tests exist yet. Do not interpret a successful verify as Kafka proof.
+main class. `mvn test` and `mvn package` run the unit suite. `mvn verify` also runs
+the Testcontainers integration test in `src/test/java/**/*IT.java`; it verifies
+bounded-window pause/poll/commit/resume behavior against Kafka, not the complete
+worker runtime.
 
 ## GitHub Actions
 
@@ -35,8 +39,8 @@ for 14 days. See the [CI task record](docs/tasks/CI01-maven-actions.md) for run 
 
 The workflow has read-only repository permissions, pinned action revisions, and
 no deployment step. Required-check branch rules are separate and have not been
-configured by this task. CI currently provides unit/package evidence only; Kafka
-integration tests and security scanning remain pending.
+configured by this task. CI runs `package`, so it does not run the Docker-backed
+integration test. Full worker integration and security scanning remain pending.
 
 ## Validation API
 
@@ -85,8 +89,9 @@ Use one owner context for every call; this class is not thread-safe.
 The bound includes completed-but-uncommitted records. Admission failure requires
 the caller to retain fetched work and pause intake, never drop records. Payload
 byte limits, fetch overshoot, process-wide accounting, and pause/resume are not
-implemented here. Rebuild the tracker on ownership changes; the future runtime
-must invalidate old callbacks and handle revocations before using a new tracker.
+implemented by this tracker. Rebuild the tracker on ownership changes; the
+future runtime must invalidate old callbacks and handle revocations before using
+a new tracker.
 
 Tests establish B05/B15 library behavior and **simulate** B09 crash/replay using a
 fake broker offset store. They do not establish live Kafka durability. Success or
@@ -109,7 +114,8 @@ releases its gate. Failure releases handler capacity but leaves the job in
 `HANDOFF_PENDING`. Observe `Submission.handlerStopped()` and, after the future
 publisher's actual broker acknowledgment, call `handoffAcknowledged()` with
 `RETRY_ACKNOWLEDGED` or `DLQ_ACKNOWLEDGED`. Failed sends make no acknowledgment call
-and must not rerun the handler. L04 will add failure classification and publication.
+and must not rerun the handler. L04 supplies failure classification; Kafka
+publication remains runtime work.
 
 All state changes and commit calls run on the owner context; off-context calls
 are rejected and handler completions are marshalled back. Register fetched records
@@ -125,10 +131,37 @@ finishes also retains both; timeout/cancellation and recovery are not implemente
 Do not complete a future early to simulate cancellation or block the event loop.
 
 This is a stable-assignment component with **fixed per-dispatcher capacity**.
-Process-wide adaptive limits, retry rate limits, byte/fetch backpressure, Kafka
-routing/commits, rebalance invalidation, and shutdown/drain remain future work.
-Tests use real Vert.x contexts and controlled futures, not Kafka. See the
+Process-wide adaptive permit wiring, retry rate limits, Kafka routing/commits,
+and shutdown/drain remain future work. L05 provides a local ownership-revocation
+hook; it is not Kafka rebalance integration. Tests use real Vert.x contexts and
+controlled futures, not Kafka. See the
 [L03 task record](docs/tasks/L03-immediate-processing.md) for its trace and handoff.
+
+## Retained-work window API
+
+`com.example.agenticjobscheduler.execution.ProcessingWindow` provides
+thread-safe, process-wide accounting for fetched work held until its source
+offset commit is acknowledged. Share one instance across the process's intake
+paths. `tryReserve(records, bytes)` accounts a fetched batch, including key/value
+bytes measured by the adapter. Keep its reservation while the record is queued,
+running, awaiting retry/DLQ handoff, or completed but uncommitted. Call
+`commitAcknowledged(reservation)` only after the corresponding Kafka commit
+succeeds.
+
+The defaults bound retained work to 1,000 records or 16 MiB. Configure maximum
+fetch count/bytes so one outstanding fetch fits within the reserved headroom.
+`intakePaused()` becomes true at either adjusted high watermark and clears only
+when **both** count and bytes fall below half of their respective watermarks.
+A failed `tryReserve` must not discard the fetched batch or dispatch it outside
+the window.
+
+This class reports pause/resume state; the worker adapter must apply it to assigned
+partitions. `ProcessingWindowKafkaIT` verifies one real-broker path: it pauses a
+partition at the record watermark, continues polling without delivery while
+paused, and resumes only after the source commit succeeds and reservations are
+released. This does not establish the Vert.x worker adapter, accounting against
+client buffers, or worker recovery. See the
+[L06 task record](docs/tasks/L06-backpressure-recovery.md).
 
 ## Retry wire example
 

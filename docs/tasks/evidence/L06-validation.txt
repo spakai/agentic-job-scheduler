@@ -1,0 +1,94 @@
+L06 backpressure/recovery evidence — 2026-10-10
+
+Base commit: 8476630acaeea21bf1cc8538c2224e96b031f0b9 (merged L05)
+Branch: feat/l06-backpressure-recovery
+
+Merged-main baseline:
+Command: mvn -B -ntp clean test
+Result: passed; 115 tests, 0 failures, 0 errors, 0 skipped.
+
+Focused L06 unit tests:
+Command: mvn -B -ntp -Dtest=ProcessingWindowTest test
+Result: passed; 5 tests, 0 failures, 0 errors, 0 skipped.
+
+Full clean build and package:
+Command: mvn -B -ntp clean package
+Result: passed; 120 tests, 0 failures, 0 errors, 0 skipped; library JAR built.
+
+Broker-backed B14 integration test:
+Command: mvn -B -ntp verify
+Result: passed; 120 unit tests and 1 Testcontainers Kafka integration test,
+0 failures/errors/skips. The test paused a real Kafka partition at the count
+watermark, continued explicit polls while paused, committed source offset 4,
+released retained reservations, resumed, and consumed offsets 4–7.
+
+Clean verification after wiring Failsafe:
+Command: mvn -B -ntp clean verify
+Result: passed; 120 unit tests and 1 Testcontainers Kafka integration test,
+0 failures/errors/skips; library JAR built. The broker-backed B14 path passed
+again from a clean Maven target directory.
+Integration report: `target/failsafe-reports/TEST-com.example.agenticjobscheduler.execution.ProcessingWindowKafkaIT.xml`.
+
+Dependency CVE scan and patched recheck:
+Commands: `mvn -B -ntp dependency:list -DincludeScope=test`;
+`mvn -B -ntp dependency:tree -Dincludes=org.apache.commons:commons-compress,org.apache.commons:commons-lang3,at.yawk.lz4:lz4-java`
+Result: initial scan reported eight CVEs across Commons Compress 1.24.0 and
+LZ4 Java 1.10.1. Patched the resolved versions to Commons Compress 1.26.0,
+Commons Lang 3.18.0, and LZ4 Java 1.11.4. First scan after patching reported one
+additional CVE in Commons Lang 3.14.0; the second override addressed it. The
+final whole-graph scan returned no findings. The clean build exposed the optional
+Commons Codec dependency required by Commons Compress 1.26.0 in Testcontainers;
+added test-scoped Commons Codec 1.16.1 and reran clean verification successfully.
+Reports and summary: session artifact directory `files/l06-cve/` contains
+`cve-report-1.json` through `cve-report-4.json`, `final-cve-report.json`, and
+`cve-fix-summary.md`.
+
+Test compilation:
+Command: mvn -B -ntp -DskipTests test-compile
+Result: passed; six test sources compiled.
+
+Whitespace and editor diagnostics:
+Command: git diff --check
+Result: passed after implementation, dependency, and documentation changes.
+Compiler evidence: `mvn clean verify` compiled all production and test sources.
+
+Docker readiness:
+Commands: docker version; docker compose version; docker ps
+Result: Docker Desktop 4.68.0 / Engine 29.3.1 and Compose 5.1.1 responded.
+Testcontainers started and cleaned up its Kafka broker for the integration test.
+Existing `spec007-worker` containers were observed and not modified; no Compose
+project was started.
+
+Focused test failures and correction:
+- Initial run: two ProcessingWindowTest errors because a test requested a batch
+  larger than its configured max-fetch count/bytes.
+- Next run: two incorrect expectations assumed resumption before both adjusted
+  watermarks were below half and assumed a rejected reservation changed counters.
+- Corrected fixtures to use valid fetch sizes and asserted the actual hysteresis
+  and refusal semantics; the final focused and full test runs passed.
+
+What the tests establish:
+- Pause at either count or byte high watermark.
+- Resume only below half of both adjusted watermarks.
+- One configured outstanding fetch may cross a high watermark without exceeding
+  the configured hard processing-window bound.
+- Invalid, foreign, or double-released reservations are rejected.
+- A reservation remains counted after a failed offset commit and is released only
+  after a later commit succeeds.
+- A native Kafka consumer pauses its assigned partition at the count watermark,
+  continues polling without receiving records while paused, then resumes record
+  delivery only after offset 4 is committed and reservations are released.
+
+What remains unverified:
+- Vert.x worker-adapter wiring of `ProcessingWindow` to Kafka partition
+  assignment/pause/resume.
+- Worker producer/consumer runtime, failed handoff/DLQ publication, broker outage
+  and restart, confirmed cancellation, and Compose demonstration (full B14–B20
+  acceptance).
+- CI/scanning artifacts and restricted agent-in-CI exercise.
+
+Build-input SHA-256:
+e38ae8ddaee5ea9b49af38007ce3bf0d0895ec4598ef8d2388949a6fd90fc1d9  pom.xml
+1dae68d984b404f7aa5d745e800d47084e5648f39dc28ada1e422c3e4455e552  src/main/java/com/example/agenticjobscheduler/execution/ProcessingWindow.java
+fab49c8aa752aafb900ee9e06ed5da8ed8911fcec1d0cc9a06d20cc765593a6c  src/test/java/com/example/agenticjobscheduler/execution/ProcessingWindowTest.java
+d3b73b55123df701b2b30d7f7494f402b1398c318df1124203c15b409d39fb5e  src/test/java/com/example/agenticjobscheduler/execution/ProcessingWindowKafkaIT.java

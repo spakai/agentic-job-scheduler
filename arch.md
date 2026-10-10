@@ -1,4 +1,4 @@
-# Architecture through L04
+# Architecture through L06 component work
 
 Snapshot: 2026-10-10. [Spec 002](specs/002-kafka-job-scheduling.md) is the
 architecture authority. This guide explains the components implemented so far
@@ -6,11 +6,13 @@ and how they fit into the Kafka worker design.
 
 **Implemented:** envelope validation, completion/offset tracking, a Vert.x
 immediate dispatcher with a library-side ownership-revocation hook, failure
-classification, and a deterministic adaptive limiter policy. **Planned:**
-executable worker verticles, Kafka consumers and publishers, retry/DLQ producer
-wiring, broker-integrated rebalance handling, and full backpressure. There is no
-PostgreSQL, Flyway, REST API, delayed-job timer, scheduling state topic, or
-RocksDB index in this architecture.
+classification, a deterministic adaptive limiter policy, and process-wide
+retained-work window accounting with one broker-backed pause/poll/commit/resume
+integration case. **Planned:** executable worker verticles, Kafka consumer and
+publisher wiring, retry/DLQ producer wiring, Vert.x adapter/rebalance handling,
+and full backpressure/recovery demonstrations.
+There is no PostgreSQL, Flyway, REST API, delayed-job timer, scheduling state
+topic, or RocksDB index in this architecture.
 
 ## 1. What each increment adds
 
@@ -21,15 +23,20 @@ RocksDB index in this architecture.
 | L03 | `ImmediateJobDispatcher` | Start eligible queue heads; serialize each jobId within its topic | 14 |
 | L04 | `FailureClassifier` + `AdaptiveLimiter` | Classify retryable vs exhausted/permanent failures and enforce the main-worker backpressure policy | focused unit coverage |
 | L05 | `ImmediateJobDispatcher.revokeOwnership()` | Stop admission/dispatch and ignore stale local callbacks for a revoked owner | 3 |
+| L06 | `ProcessingWindow` | Account retained record count/bytes, reserve bounded fetch overshoot, and expose pause/resume hysteresis | 5 unit + 1 Kafka integration |
 
 These are executed cases, including parameterized inputs, not separate test
 methods per increment. L03 tests run real Vert.x event loops with controlled
 handler futures; L04 adds library-level unit checks for retry/DLQ classification
-and adaptive limiter behavior. Crash/replay tests use a simulated broker store;
-no real Kafka integration suite exists yet. Evidence: [L01](docs/tasks/L01-envelope-validation.md),
+and adaptive limiter behavior. Crash/replay tests use a simulated broker store.
+One L06 integration test uses a real Kafka broker; it does not constitute a
+worker integration suite. Evidence:
+[L01](docs/tasks/L01-envelope-validation.md),
 [L02](docs/tasks/L02-completion-offsets.md),
-[L03](docs/tasks/L03-immediate-processing.md), and
-[L04](docs/tasks/L04-retry-dlq-limiter.md).
+[L03](docs/tasks/L03-immediate-processing.md),
+[L04](docs/tasks/L04-retry-dlq-limiter.md),
+[L05](docs/tasks/L05-replay-rebalances.md), and
+[L06](docs/tasks/L06-backpressure-recovery.md).
 
 ## 2. Intended Kafka partition ownership
 
@@ -288,7 +295,43 @@ Replay can therefore duplicate effects, and a callback ignored locally does not
 prove a previously sent broker commit was rejected. The tests exercise this
 library boundary, not Kafka consumer-group callbacks or a live rebalance.
 
-## 9. Guarantees, gaps, and the next increments
+## 9. L06: bounded retained-work window
+
+`ProcessingWindow` is a thread-safe process-scoped accounting component intended
+to be shared by the main and retry intake paths within one process. Each fetched
+batch reserves its record count and key/value byte count. Keep the reservation
+until the source offset commit is acknowledged; handler success or handoff
+acknowledgment alone does not release window capacity.
+
+```text
+              retained work (count OR bytes reaches high watermark)
+  intake open -------------------------------------------------> paused
+       ^                                                           |
+       |                                                           |
+       +---------------- both dimensions below 50% ----------------+
+
+ pauseAt = hard bound - one configured fetch batch
+ hard bound = 1,000 records OR 16 MiB (constructor-configurable)
+```
+
+The configured single-fetch allowance accounts for one outstanding fetch after
+the pause threshold is reached. A rejected reservation remains the caller's
+responsibility and must not be dropped or dispatched without accounting.
+`intakePaused()` is a library signal only: the worker adapter must apply it to
+assigned partitions while continuing polls/heartbeats, and resume only after the
+window reports the low-water condition. `ProcessingWindowKafkaIT` uses a
+Testcontainers broker and Kafka consumer to exercise record-watermark pause,
+polling while paused, commit acknowledgment, reservation release, and resume.
+It is an integration check of that sequence, not the Vert.x worker adapter.
+Record-byte accounting against Kafka client buffers and service-wide integration
+are not established by this test.
+
+The five L06 unit tests cover count and byte thresholds, hysteresis, one bounded
+fetch overshoot, and reservation lifecycle/negative cases. The single Kafka
+integration case covers a count-based partition pause/resume path. They do not
+represent the full B14–B20 worker-runtime acceptance suite.
+
+## 10. Guarantees, gaps, and the next increments
 
 Per-job exclusion applies within a stable topic owner. It does not guarantee
 cross-topic exclusion or prevent an old external operation continuing after
@@ -306,8 +349,8 @@ and tracker will be rebuilt from replay.
 | Failure classification and adaptive limiter policy | L04, library-scoped and validated in unit tests |
 | Retry/DLQ publication wiring and runtime rate limits | future worker publisher/consumer integration |
 | Kafka consumer rebalance wiring, handler cancellation/drain, and broker-side commit fencing | Future worker-runtime integration |
-| Full byte/fetch backpressure, broker recovery and Compose evidence | L06 |
-| Real Kafka consumer/producer/commit integration | Runtime work; not established by these unit-level tests |
+| Vert.x worker-adapter backpressure, broker outage/replay tests, and Compose demo | L06 runtime follow-up |
+| Full Kafka consumer/producer/handoff/commit integration | Runtime work; one bounded-window Kafka integration case exists |
 | Fresh-session learning exercise | L03 handoff prepared; actual resumption still pending |
 
 Basic [GitHub Actions CI](.github/workflows/maven.yml) runs unit tests/package and
