@@ -1,14 +1,15 @@
-# Architecture through L01–L03
+# Architecture through L04
 
 Snapshot: 2026-10-10. [Spec 002](specs/002-kafka-job-scheduling.md) is the
 architecture authority. This guide explains the components implemented so far
-and how they will fit into the Kafka worker.
+and how they fit into the Kafka worker design.
 
-**Implemented:** envelope validation, completion/offset tracking, and a Vert.x
-immediate dispatcher. **Planned:** executable worker verticles, Kafka consumers
-and publishers, adaptive/rate limits, rebalance handling, and full backpressure.
-There is no PostgreSQL, Flyway, REST API, delayed-job timer, scheduling state
-topic, or RocksDB index in this architecture.
+**Implemented:** envelope validation, completion/offset tracking, a Vert.x
+immediate dispatcher, failure classification, and a deterministic adaptive
+limiter policy. **Planned:** executable worker verticles, Kafka consumers and
+publishers, retry/DLQ producer wiring, rebalance handling, and full
+backpressure. There is no PostgreSQL, Flyway, REST API, delayed-job timer,
+scheduling state topic, or RocksDB index in this architecture.
 
 ## 1. What each increment adds
 
@@ -17,14 +18,16 @@ topic, or RocksDB index in this architecture.
 | L01 | `EnvelopeValidator` | Validate raw main/retry envelopes and preserve invocation identity | 77 |
 | L02 | `OffsetCommitTracker` | Propose commits only for completed delivered prefixes | 17 |
 | L03 | `ImmediateJobDispatcher` | Start eligible queue heads; serialize each jobId within its topic | 14 |
-| Total | | Final L03 clean test/package snapshot | **108** |
+| L04 | `FailureClassifier` + `AdaptiveLimiter` | Classify retryable vs exhausted/permanent failures and enforce the main-worker backpressure policy | focused unit coverage |
 
-These are executed cases, including parameterized inputs, not 108 separate test
-methods. L03 tests run real Vert.x event loops with controlled handler futures.
-Crash/replay tests use a simulated broker store; no real Kafka integration suite
-exists yet. Evidence: [L01](docs/tasks/L01-envelope-validation.md),
-[L02](docs/tasks/L02-completion-offsets.md), and
-[L03](docs/tasks/L03-immediate-processing.md).
+These are executed cases, including parameterized inputs, not separate test
+methods per increment. L03 tests run real Vert.x event loops with controlled
+handler futures; L04 adds library-level unit checks for retry/DLQ classification
+and adaptive limiter behavior. Crash/replay tests use a simulated broker store;
+no real Kafka integration suite exists yet. Evidence: [L01](docs/tasks/L01-envelope-validation.md),
+[L02](docs/tasks/L02-completion-offsets.md),
+[L03](docs/tasks/L03-immediate-processing.md), and
+[L04](docs/tasks/L04-retry-dlq-limiter.md).
 
 ## 2. Intended Kafka partition ownership
 
@@ -143,7 +146,10 @@ Partition P0, delivered in this order:
 A queue head starts immediately when handler capacity exists. There is no
 scheduled time or eligibility timer. Ready partitions take turns; ready job lanes
 within a partition are FIFO. The current capacity is **fixed per dispatcher**,
-not the final process-wide adaptive main limit or retry rate budget.
+not the final process-wide adaptive main limit or retry rate budget. The L04
+`AdaptiveLimiter` models that policy in memory; the worker runtime will later read
+it as a shared process-wide budget once the consumer and producer wiring is
+added.
 
 The 14 L03 cases cover immediate starts and event-loop responsiveness, same-job
 FIFO exclusion, different-job overlap, independent main/retry dispatchers,
@@ -212,8 +218,9 @@ fetch overshoot, pause/resume, and broker commit I/O remain future work.
 
 For supported handlers, the returned future must complete only after work has
 actually stopped. While a failed A1 awaits publication, job B may use the released
-handler slot, but A2 remains blocked. L03 exposes `handoffAcknowledged()`;
-publication and failure classification are not yet implemented.
+handler slot, but A2 remains blocked. L03 exposes `handoffAcknowledged()`; L04
+adds the library-side classification and payload decision rules, but the full
+Kafka publisher/consumer wiring remains future runtime work.
 
 A never-finishing handler keeps its gate and capacity. Returning a null future
 violates the contract and leaves the submission `STUCK`, also holding both.
@@ -246,8 +253,9 @@ Main verticle                        Separate retry verticle
 ```
 
 Retry workers execute their own topic directly; they do not forward work back to
-main. Matching partition numbers across topics do not create a shared lock.
-Slower retry concurrency/rate limits and retry/DLQ publication remain planned.
+main. Matching partition numbers across topics do not create a shared lock. L04
+models the retry/DLQ decision boundary in code, while full producer wiring,
+acknowledgment handling, and retry-rate integration remain future runtime work.
 
 ## 8. Guarantees, gaps, and the next increments
 
@@ -264,10 +272,11 @@ and tracker will be rebuilt from replay.
 
 | Remaining area | Intended increment/boundary |
 | --- | --- |
-| Failure classification, retry/DLQ publication, adaptive/rate limits | L04 |
+| Failure classification and adaptive limiter policy | L04, library-scoped and validated in unit tests |
+| Retry/DLQ publication wiring and runtime rate limits | future worker publisher/consumer integration |
 | Ownership invalidation, replay/rebalance and cancellation/drain | L05 |
 | Full byte/fetch backpressure, broker recovery and Compose evidence | L06 |
-| Real Kafka consumer/producer/commit integration | Runtime work; not established by these 108 tests |
+| Real Kafka consumer/producer/commit integration | Runtime work; not established by these unit-level tests |
 | Fresh-session learning exercise | L03 handoff prepared; actual resumption still pending |
 
 Basic [GitHub Actions CI](.github/workflows/maven.yml) runs unit tests/package and
