@@ -155,12 +155,13 @@ when **both** count and bytes fall below half of their respective watermarks.
 A failed `tryReserve` must not discard the fetched batch or dispatch it outside
 the window.
 
-This class reports pause/resume state; the worker adapter must apply it to assigned
-partitions. `ProcessingWindowKafkaIT` verifies one real-broker path: it pauses a
-partition at the record watermark, continues polling without delivery while
-paused, and resumes only after the source commit succeeds and reservations are
-released. This does not establish the Vert.x worker adapter, accounting against
-client buffers, or worker recovery. See the
+`ProcessingWindowKafkaController` applies the window signal to assigned
+partitions through Vert.x Kafka's partition-level pause/resume API. The
+Testcontainers-backed `ProcessingWindowKafkaIT` verifies one real-broker path:
+it pauses a partition at the record watermark, continues polling without
+delivery while paused, and resumes only after the source commit succeeds and
+reservations are released. This does not establish rebalance handling,
+accounting against client buffers, or worker recovery. See the
 [L06 task record](docs/tasks/L06-backpressure-recovery.md).
 
 ## Retry wire example

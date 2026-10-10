@@ -7,10 +7,11 @@ and how they fit into the Kafka worker design.
 **Implemented:** envelope validation, completion/offset tracking, a Vert.x
 immediate dispatcher with a library-side ownership-revocation hook, failure
 classification, a deterministic adaptive limiter policy, and process-wide
-retained-work window accounting with one broker-backed pause/poll/commit/resume
-integration case. **Planned:** executable worker verticles, Kafka consumer and
-publisher wiring, retry/DLQ producer wiring, Vert.x adapter/rebalance handling,
-and full backpressure/recovery demonstrations.
+retained-work window accounting with a Vert.x Kafka partition pause/resume
+controller and one broker-backed pause/poll/commit/resume integration case.
+**Planned:** executable worker verticles, Kafka publisher wiring, retry/DLQ
+producer wiring, rebalance integration, and full backpressure/recovery
+demonstrations.
 There is no PostgreSQL, Flyway, REST API, delayed-job timer, scheduling state
 topic, or RocksDB index in this architecture.
 
@@ -23,14 +24,14 @@ topic, or RocksDB index in this architecture.
 | L03 | `ImmediateJobDispatcher` | Start eligible queue heads; serialize each jobId within its topic | 14 |
 | L04 | `FailureClassifier` + `AdaptiveLimiter` | Classify retryable vs exhausted/permanent failures and enforce the main-worker backpressure policy | focused unit coverage |
 | L05 | `ImmediateJobDispatcher.revokeOwnership()` | Stop admission/dispatch and ignore stale local callbacks for a revoked owner | 3 |
-| L06 | `ProcessingWindow` | Account retained record count/bytes, reserve bounded fetch overshoot, and expose pause/resume hysteresis | 5 unit + 1 Kafka integration |
+| L06 | `ProcessingWindow` + `ProcessingWindowKafkaController` | Account retained work, reserve bounded fetch overshoot, and apply pause/resume to assigned Vert.x Kafka partitions | 5 unit + 1 Kafka integration |
 
 These are executed cases, including parameterized inputs, not separate test
 methods per increment. L03 tests run real Vert.x event loops with controlled
 handler futures; L04 adds library-level unit checks for retry/DLQ classification
 and adaptive limiter behavior. Crash/replay tests use a simulated broker store.
-One L06 integration test uses a real Kafka broker; it does not constitute a
-worker integration suite. Evidence:
+One L06 integration test uses a real Kafka broker and the Vert.x Kafka consumer;
+it does not constitute a complete worker integration suite. Evidence:
 [L01](docs/tasks/L01-envelope-validation.md),
 [L02](docs/tasks/L02-completion-offsets.md),
 [L03](docs/tasks/L03-immediate-processing.md),
@@ -317,18 +318,17 @@ acknowledgment alone does not release window capacity.
 The configured single-fetch allowance accounts for one outstanding fetch after
 the pause threshold is reached. A rejected reservation remains the caller's
 responsibility and must not be dropped or dispatched without accounting.
-`intakePaused()` is a library signal only: the worker adapter must apply it to
-assigned partitions while continuing polls/heartbeats, and resume only after the
-window reports the low-water condition. `ProcessingWindowKafkaIT` uses a
-Testcontainers broker and Kafka consumer to exercise record-watermark pause,
-polling while paused, commit acknowledgment, reservation release, and resume.
-It is an integration check of that sequence, not the Vert.x worker adapter.
-Record-byte accounting against Kafka client buffers and service-wide integration
-are not established by this test.
+`ProcessingWindowKafkaController` applies the window signal to assigned
+partitions through Vert.x Kafka's partition pause/resume API; it does not pause
+the global ReadStream. `ProcessingWindowKafkaIT` uses a Testcontainers broker
+and Vert.x Kafka consumer to exercise record-watermark pause, polling while
+paused, commit acknowledgment, reservation release, and resume. This verifies
+the adapter's count-watermark path, not rebalance handling, record-byte
+accounting against Kafka client buffers, or service-wide integration.
 
 The five L06 unit tests cover count and byte thresholds, hysteresis, one bounded
 fetch overshoot, and reservation lifecycle/negative cases. The single Kafka
-integration case covers a count-based partition pause/resume path. They do not
+integration case covers Vert.x count-based partition pause/resume. They do not
 represent the full B14–B20 worker-runtime acceptance suite.
 
 ## 10. Guarantees, gaps, and the next increments

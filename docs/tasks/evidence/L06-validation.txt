@@ -16,17 +16,18 @@ Command: mvn -B -ntp clean package
 Result: passed; 120 tests, 0 failures, 0 errors, 0 skipped; library JAR built.
 
 Broker-backed B14 integration test:
-Command: mvn -B -ntp verify
-Result: passed; 120 unit tests and 1 Testcontainers Kafka integration test,
-0 failures/errors/skips. The test paused a real Kafka partition at the count
-watermark, continued explicit polls while paused, committed source offset 4,
-released retained reservations, resumed, and consumed offsets 4–7.
+Command: mvn -B -ntp -Dit.test=ProcessingWindowKafkaIT verify
+Result: passed; 120 unit tests and 1 Testcontainers Vert.x Kafka integration
+test, 0 failures/errors/skips. The test assigned one real Kafka partition via
+Vert.x, paused it at the count watermark, continued explicit polls while
+paused, committed source offset 4, released retained reservations, resumed,
+and consumed offsets 4–7.
 
-Clean verification after wiring Failsafe:
+Clean verification after adding the Vert.x Kafka controller:
 Command: mvn -B -ntp clean verify
-Result: passed; 120 unit tests and 1 Testcontainers Kafka integration test,
-0 failures/errors/skips; library JAR built. The broker-backed B14 path passed
-again from a clean Maven target directory.
+Result: passed; 120 unit tests and 1 Testcontainers Vert.x Kafka integration
+test, 0 failures/errors/skips; library JAR built. The B14 adapter path passed
+from a clean Maven target directory.
 Integration report: `target/failsafe-reports/TEST-com.example.agenticjobscheduler.execution.ProcessingWindowKafkaIT.xml`.
 
 Dependency CVE scan and patched recheck:
@@ -43,14 +44,19 @@ Reports and summary: session artifact directory `files/l06-cve/` contains
 `cve-report-1.json` through `cve-report-4.json`, `final-cve-report.json`, and
 `cve-fix-summary.md`.
 
-Test compilation:
-Command: mvn -B -ntp -DskipTests test-compile
-Result: passed; six test sources compiled.
+Incremental CVE check for the added Vert.x Kafka client:
+Workflow: `appmod-cve-assessment`, Maven ecosystem, coordinate
+`io.vertx:vertx-kafka-client:5.2.1` declared at `pom.xml:51`.
+Result: no known CVE vulnerabilities found. Report:
+session artifact `files/l06-cve/cve-report-5.json`. The previous full resolved
+graph scan remains the evidence for dependencies already present before this
+client was added.
 
 Whitespace and editor diagnostics:
 Command: git diff --check
 Result: passed after implementation, dependency, and documentation changes.
-Compiler evidence: `mvn clean verify` compiled all production and test sources.
+Compiler evidence: `mvn -B -ntp clean verify` compiled all 13 production and
+six test sources.
 
 Docker readiness:
 Commands: docker version; docker compose version; docker ps
@@ -75,20 +81,22 @@ What the tests establish:
 - Invalid, foreign, or double-released reservations are rejected.
 - A reservation remains counted after a failed offset commit and is released only
   after a later commit succeeds.
-- A native Kafka consumer pauses its assigned partition at the count watermark,
-  continues polling without receiving records while paused, then resumes record
-  delivery only after offset 4 is committed and reservations are released.
+- The Vert.x Kafka consumer pauses its assigned partition at the count
+  watermark, continues polling without receiving records while paused, then
+  resumes record delivery only after offset 4 is committed and reservations
+  are released.
 
 What remains unverified:
-- Vert.x worker-adapter wiring of `ProcessingWindow` to Kafka partition
-  assignment/pause/resume.
+- Rebalance handling or service-wide worker wiring around the
+  `ProcessingWindowKafkaController`.
 - Worker producer/consumer runtime, failed handoff/DLQ publication, broker outage
   and restart, confirmed cancellation, and Compose demonstration (full B14–B20
   acceptance).
 - CI/scanning artifacts and restricted agent-in-CI exercise.
 
 Build-input SHA-256:
-e38ae8ddaee5ea9b49af38007ce3bf0d0895ec4598ef8d2388949a6fd90fc1d9  pom.xml
+47cee4cd709c358721fd265e26f04e4c49a779cae61a251b5c4b9d02b4bed551  pom.xml
 1dae68d984b404f7aa5d745e800d47084e5648f39dc28ada1e422c3e4455e552  src/main/java/com/example/agenticjobscheduler/execution/ProcessingWindow.java
+ed7d8c9f097c7a159fa2cadbe5a98ed8b8ee2d7983b30d555e8bb50cab573d28  src/main/java/com/example/agenticjobscheduler/execution/ProcessingWindowKafkaController.java
 fab49c8aa752aafb900ee9e06ed5da8ed8911fcec1d0cc9a06d20cc765593a6c  src/test/java/com/example/agenticjobscheduler/execution/ProcessingWindowTest.java
-d3b73b55123df701b2b30d7f7494f402b1398c318df1124203c15b409d39fb5e  src/test/java/com/example/agenticjobscheduler/execution/ProcessingWindowKafkaIT.java
+ff04eebaf68b866a72d3c0925740ad2dc877dc521f3a9efd85052d0c50b48d6d  src/test/java/com/example/agenticjobscheduler/execution/ProcessingWindowKafkaIT.java

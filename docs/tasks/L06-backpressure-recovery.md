@@ -8,28 +8,42 @@ Status: in progress
   acceptance IDs B14–B20.
 - Base commit and branch: merged L05 commit `8476630acaeea21bf1cc8538c2224e96b031f0b9`;
   branch `feat/l06-backpressure-recovery`.
+- Current continuation slice (2026-10-10): implement/test the pinned Vert.x
+  Kafka consumer pause/resume controller for B14, using only assigned partition
+  pause/resume while the consumer continues polling. This slice is implemented
+  and broker-tested; it does not complete B14–B20 or replace the separately
+  tested bounded-work accounting.
 - Authorized scope and unresolved decisions: implement on the current Kafka-first
   architecture. A clean merged-main baseline passes. Docker is now available.
   The repository currently contains library components, not an executable
   Kafka worker, so worker wiring and integration fixtures are in scope where
   required by B14–B20; preserve the independent main/retry groups and no-store
   architecture.
-- Expected behavior and invariant for the current code slice: one
+- Expected behavior and invariant for the bounded-window slice: one
   `ProcessingWindow` can be shared across intake paths; reservations track record
   count and key/value byte count until the corresponding source commit is
   acknowledged. It pauses at either adjusted high watermark, allows at most one
   configured fetch overshoot, and resumes only below 50% of both watermarks.
-  Complete L06 additionally requires a Kafka adapter/runtime for B14–B20; this
-  component alone is not claimed to deliver all those cases.
-- Files/components changed so far: `ProcessingWindow`, focused unit tests,
-  README/architecture documentation, and this task/evidence record.
+- Expected behavior for the continuation slice: a Vert.x consumer with assigned
+  partitions applies the window pause signal only to those Kafka partitions,
+  keeps its poll/heartbeat machinery active, and resumes them only after
+  commit-acknowledged releases move the window below both low watermarks. Failures
+  from pause/resume operations remain visible to the caller.
+  `ProcessingWindowKafkaController` and a Vert.x Kafka/Testcontainers integration
+  case now establish this count-watermark path. Complete L06 additionally
+  requires the worker runtime and B14–B20 recovery cases; this component alone
+  is not claimed to deliver them.
+- Files/components changed so far: `ProcessingWindow`,
+  `ProcessingWindowKafkaController`, unit and Vert.x Kafka integration tests,
+  dependency wiring and CVE overrides, README/architecture/spec documentation,
+  and this task/evidence record.
 - Steps and validation approach: establish a clean merged-main baseline; verify
   official Vert.x Kafka pause/resume and Testcontainers documentation; implement
   count/byte watermarks, one-fetch headroom, acknowledgment-bound reservations,
-  and negative tests; then exercise the pause/poll/commit/resume boundary against
-  a Testcontainers Kafka broker. The Vert.x adapter/runtime, outage integration,
-  Dockerfile, Compose/demo artifacts, and remaining B14–B20 coverage are
-  outstanding.
+  and negative tests; exercise pause/poll/commit/resume through Vert.x Kafka
+  against Testcontainers. The full worker/retry/DLQ runtime, rebalance handling,
+  outage recovery, Dockerfile, Compose/demo artifacts, and remaining B14–B20
+  coverage are still outstanding.
 - Non-goals: PostgreSQL/Flyway/REST, delayed scheduling/state topics/RocksDB,
   cross-topic exclusion, durable deduplication, global ordering, exactly-once
   effects, or external-effect fencing.
@@ -82,6 +96,20 @@ Status: in progress
   Commons Lang 3.14.0 pulled by the first patch. Overrode the resolved versions
   to patched releases, added Commons Codec needed by Commons Compress at
   Testcontainers startup, and rescanned the whole graph with no findings.
+- 2026-10-10: added `ProcessingWindowKafkaController` to apply the shared window
+  signal to assigned Vert.x Kafka partitions. A Testcontainers integration test
+  drives the pinned Vert.x consumer through assignment, pause, continued polling
+  without delivery, acknowledged source commit, reservation release, resume, and
+  consumption of the remaining offsets. Pause/resume futures remain visible to
+  callers; rebalance integration is still pending.
+- 2026-10-10: the first broker run caught that the controller had been bound to
+  the test's initial context rather than the consumer's operation context.
+  Constructing it from the context of the completed assignment future fixed the
+  ownership mismatch; the focused broker test then passed.
+- 2026-10-10: `appmod-cve-assessment` checked the newly added resolved
+  `io.vertx:vertx-kafka-client:5.2.1` coordinate and reported no known findings.
+  The prior full resolved-graph scan remains clean for dependencies already
+  present before this client was added.
 
 ## Evaluation
 
@@ -89,12 +117,12 @@ Status: in progress
 | --- | --- | --- | --- | --- |
 | Merged L05 baseline | `8476630` | `mvn -B -ntp clean test` | passed: 115 tests, 0 failures/errors/skips | session output; retain final L06 evidence |
 | Processing-window component (partial B14) | working tree | `mvn -B -ntp -Dtest=ProcessingWindowTest test` | passed: 5 tests, 0 failures/errors/skips | [L06 validation evidence](evidence/L06-validation.txt) |
-| Kafka pause/poll/commit/resume (partial B14) | working tree | `mvn -B -ntp clean verify` | passed after dependency fixes: 1 Testcontainers Kafka integration test; 120 unit tests also passed | [L06 validation evidence](evidence/L06-validation.txt) |
+| Vert.x Kafka pause/poll/commit/resume (partial B14) | working tree | `mvn -B -ntp -Dit.test=ProcessingWindowKafkaIT verify` | passed: 120 unit tests and 1 Testcontainers Vert.x Kafka integration test, 0 failures/errors/skips | [L06 validation evidence](evidence/L06-validation.txt) |
 | Maven dependency CVE scan and patched rescan | working tree | `appmod-cve-assessment` against the resolved Maven test graph | final rescan clean; initial and intermediate findings fixed | session artifact `files/l06-cve/` |
 | Existing safe-prefix and handoff boundary (B15/B16 library coverage) | `8476630` + L06 tree | `mvn -B -ntp clean package` | passed within 120-test suite; not a Kafka publisher test | [L06 validation evidence](evidence/L06-validation.txt) |
 | Existing simulated crash/replay, invalid envelope, and STUCK handler cases (partial B17/B18/B19) | `8476630` + L06 tree | `mvn -B -ntp clean package` | passed within 120-test suite; only test doubles/library behavior | [L06 validation evidence](evidence/L06-validation.txt) |
-| Full B14–B20 worker runtime acceptance, including Vert.x adapter, outage/replay and Compose (B20) | n/a | runtime and Docker artifacts not implemented | not run | no full-runtime claim |
-| Full clean build, unit suite, broker-backed integration, and package | L06 working tree | `mvn -B -ntp clean verify` | passed: 120 unit tests and 1 Kafka integration test; JAR built | [L06 validation evidence](evidence/L06-validation.txt) |
+| Full B14–B20 worker runtime acceptance, including rebalances, outage/replay and Compose (B20) | n/a | runtime and Docker artifacts not implemented | not run | no full-runtime claim |
+| Full clean build, unit suite, Vert.x broker-backed integration, and package | L06 working tree | `mvn -B -ntp clean verify` | passed: 120 unit tests and 1 Vert.x Kafka integration test; JAR built | [L06 validation evidence](evidence/L06-validation.txt) |
 | Whitespace | L06 working tree | `git diff --check` | passed | [L06 validation evidence](evidence/L06-validation.txt) |
 | Editor diagnostics | L06 working tree | Problems panel for `ProcessingWindow` and its test | no errors | [L06 validation evidence](evidence/L06-validation.txt) |
 | Docker/Testcontainers broker | working tree | `mvn -B -ntp verify` | passed; L06 Kafka container started and cleaned up; pre-existing `spec007-worker` containers untouched | [L06 validation evidence](evidence/L06-validation.txt) |
@@ -103,8 +131,8 @@ Status: in progress
 Negative window tests reject fetch-bound violations, prevent new reservations
 while paused, prevent foreign/double release, and verify that a failed commit
 retains the window reservation. Remaining B14–B20 cases need the actual worker
-runtime: the Vert.x adapter applying pause while polling, failed publish/DLQ
-behavior, broker restart, confirmed cancellation, and Compose execution.
+runtime: rebalance handling, failed publish/DLQ behavior, broker restart,
+confirmed cancellation, and Compose execution.
 
 ## Failure analysis and correction
 
@@ -125,22 +153,21 @@ behavior, broker restart, confirmed cancellation, and Compose execution.
   the configured hard bound. Added test-scoped Commons Codec because Commons
   Compress declares it optional but Testcontainers uses the dependent API.
 - Rerun and remaining uncertainty: the focused window tests, full unit/package
-  suite, broker-backed pause/poll/commit/resume integration case, and final
-  dependency rescan passed. Full worker-runtime integration remains outstanding.
+  suite, Vert.x broker-backed pause/poll/commit/resume integration case, and
+  dependency scans passed. Full worker-runtime integration remains outstanding.
 
 ## Handoff and review
 
-- Latest verified commit and working-tree changes: base `8476630` on
-  `feat/l06-backpressure-recovery` plus uncommitted library/docs changes;
+- Latest verified commit and working-tree changes: base `206eb2e` on
+  `feat/l06-backpressure-recovery` plus uncommitted controller/test/docs changes;
   implementation input hashes are in
   [L06 validation evidence](evidence/L06-validation.txt).
   unrelated pre-existing `.vscode/` remains untouched.
 - Completed steps: confirmed L05 merge, clean test baseline, Docker readiness,
   current spec, official API documentation, bounded window implementation,
-  focused tests, and one real-broker pause/poll/commit/resume test.
-- Next concrete step: implement the Vert.x Kafka worker adapter that connects
-  `ProcessingWindow` to assigned partitions, then add the remaining B16–B20
-  runtime/recovery cases before calling L06 complete.
+  focused tests, and Vert.x controller pause/poll/commit/resume against a broker.
+- Next concrete step: implement worker runtime and remaining B14–B20
+  recovery/integration cases before calling L06 complete.
 - Open risks/decisions and owner: runtime scope is larger than prior library
   increments; distinguish broker-backed evidence from test doubles and preserve
   at-least-once semantics.
