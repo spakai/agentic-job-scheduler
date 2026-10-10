@@ -184,6 +184,7 @@ grant broad permissions merely to make a failing workflow turn green.
 | Copilot/MCP setup and permissions exercise | Not verified |
 | Fresh-session memory exercise | Not run |
 | Multi-agent exercise | Not run |
+| Basic GitHub Actions CI | PR success/failure and artifacts verified before L03; see [CI01](tasks/CI01-maven-actions.md) |
 | Agent-in-CI and GitHub enforcement exercise | Not configured/verified |
 
 Update this ledger with evidence links as exercises finish. Read the official
