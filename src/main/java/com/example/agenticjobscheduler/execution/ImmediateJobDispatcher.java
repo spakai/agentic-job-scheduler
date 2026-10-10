@@ -4,6 +4,7 @@ import io.vertx.core.Context;
 import io.vertx.core.Future;
 import io.vertx.core.Promise;
 import io.vertx.core.Vertx;
+import com.example.agenticjobscheduler.messaging.SourceRecord;
 import java.util.ArrayDeque;
 import java.util.HashMap;
 import java.util.List;
@@ -12,6 +13,7 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
+import java.util.function.Supplier;
 import java.util.stream.Collectors;
 
 /**
@@ -31,6 +33,7 @@ public final class ImmediateJobDispatcher {
         private final OffsetCommitTracker.Delivery delivery;
         private final Promise<HandlerResult> stopped = Promise.promise();
         private State state = State.QUEUED;
+        private Throwable handlerFailure;
 
         private Submission(ImmediateJobDispatcher owner, JobExecution execution,
                            OffsetCommitTracker.Delivery delivery) {
@@ -47,12 +50,17 @@ public final class ImmediateJobDispatcher {
          * this future may remain incomplete; discard this submission with its owner.
          */
         public Future<HandlerResult> handlerStopped() { return stopped.future(); }
+
+        public Throwable handlerFailure() {
+            owner.requireSubmission(this);
+            return handlerFailure;
+        }
     }
 
     private final Context context;
     private final String topic;
     private final JobHandler handler;
-    private final int capacity;
+    private int capacity;
     private final OffsetCommitTracker tracker;
     private final List<Integer> partitionOrder;
     private final Map<Integer, ArrayDeque<UUID>> runnable = new HashMap<>();
@@ -101,6 +109,38 @@ public final class ImmediateJobDispatcher {
     }
 
     /**
+     * Registers an invalid delivery before its DLQ publication. The source can
+     * complete only after the supplied future confirms that handoff.
+     */
+    public Future<Void> submitTerminal(SourceRecord source, Supplier<Future<Void>> handoff) {
+        requireContext();
+        if (ownershipRevoked) {
+            throw new IllegalStateException("Dispatcher ownership has been revoked");
+        }
+        Objects.requireNonNull(handoff, "handoff");
+        OffsetCommitTracker.Delivery delivery = tracker.delivered(source);
+        Promise<Void> acknowledged = Promise.promise();
+        Future<Void> publication;
+        try {
+            publication = Objects.requireNonNull(handoff.get(), "handoff future");
+        } catch (RuntimeException failure) {
+            return Future.failedFuture(failure);
+        }
+        publication.onComplete(result -> context.runOnContext(ignored -> {
+            if (ownershipRevoked) {
+                return;
+            }
+            if (result.succeeded()) {
+                tracker.complete(delivery, OffsetCommitTracker.Completion.DLQ_ACKNOWLEDGED);
+                acknowledged.complete();
+            } else {
+                acknowledged.fail(result.cause());
+            }
+        }));
+        return acknowledged.future();
+    }
+
+    /**
      * Invalidates this fixed-assignment owner. Does not cancel already-started
      * handlers; discard this dispatcher and create a fresh one for new ownership.
      */
@@ -142,9 +182,30 @@ public final class ImmediateJobDispatcher {
         return activeHandlers;
     }
 
+    /** Adjusts admission without cancelling already-running handlers. */
+    public void setCapacity(int capacity) {
+        requireContext();
+        if (capacity < 0) {
+            throw new IllegalArgumentException("Capacity cannot be negative");
+        }
+        this.capacity = capacity;
+        dispatch();
+    }
+
     public int retainedRecords() {
         requireContext();
         return tracker.retainedRecords();
+    }
+
+    public int queuedRecords(Context ownerContext) {
+        if (ownerContext != context) {
+            throw new IllegalArgumentException("Queue depth is available only to the owner context");
+        }
+        requireContext();
+        return (int) lanes.values().stream()
+                .flatMap(lane -> lane.stream())
+                .filter(submission -> submission.state == State.QUEUED)
+                .count();
     }
 
     public Optional<OffsetCommitTracker.CommitBatch> beginCommit() {
@@ -186,7 +247,8 @@ public final class ImmediateJobDispatcher {
                     next.state = State.STUCK;
                     continue;
                 }
-                result.onComplete(outcome -> context.runOnContext(ignored -> stopped(next, outcome.succeeded())));
+                result.onComplete(outcome -> context.runOnContext(
+                        ignored -> stopped(next, outcome.succeeded() ? null : outcome.cause())));
             }
         } finally {
             dispatching = false;
@@ -203,10 +265,12 @@ public final class ImmediateJobDispatcher {
         return null;
     }
 
-    private void stopped(Submission submission, boolean succeeded) {
+    private void stopped(Submission submission, Throwable failure) {
         requireContext();
         if (ownershipRevoked || submission.state != State.RUNNING) return;
         activeHandlers--;
+        submission.handlerFailure = failure;
+        boolean succeeded = failure == null;
         if (succeeded) {
             complete(submission, OffsetCommitTracker.Completion.HANDLER_SUCCESS);
         } else {

@@ -1,5 +1,24 @@
 L06 backpressure/recovery evidence — 2026-10-10
 
+Fresh health check of pushed feature snapshot:
+Commit: 7e9e7d090fa9c3823c30ffc0e75a6de88e756ca1
+Branch: feat/l06-worker-runtime
+Command: mvn -B -ntp clean verify
+Result: passed from a clean target directory. Maven compiled 22 production
+sources and 8 test sources, ran 123 unit tests and 4 Testcontainers integration
+tests (KafkaWorkerIT: 2, KafkaWorkerCrashIT: 1, ProcessingWindowKafkaIT: 1),
+with 0 failures, errors, or skips, and built the JAR.
+Evidence: current session command output, 2026-10-10.
+Expected injected-failure output: KafkaWorkerIT logged RecordTooLargeException
+warnings while exercising rejected retry sends; both integration cases passed
+and verified failed-handoff retention/recovery and DLQ behavior.
+Acceptance boundary: this run confirms only cases exercised by the suite. It
+does not close L06. Worker-level B15 out-of-order/independent-partition commits,
+B19 unconfirmed cancellation, B14 full worker-under-pressure behavior, sustained
+broker-outage B18, and worker-level B07/B11/B13 behavior remain unverified.
+The Compose demonstrations below are prior manual evidence, not part of this
+Maven invocation.
+
 Base commit: 8476630acaeea21bf1cc8538c2224e96b031f0b9 (merged L05)
 Branch: feat/l06-backpressure-recovery
 
@@ -86,13 +105,107 @@ What the tests establish:
   resumes record delivery only after offset 4 is committed and reservations
   are released.
 
-What remains unverified:
-- Rebalance handling or service-wide worker wiring around the
-  `ProcessingWindowKafkaController`.
-- Worker producer/consumer runtime, failed handoff/DLQ publication, broker outage
-  and restart, confirmed cancellation, and Compose demonstration (full B14–B20
-  acceptance).
-- CI/scanning artifacts and restricted agent-in-CI exercise.
+Continuation runtime evidence — 2026-10-10
+
+Branch: feat/l06-worker-runtime
+Base commit: 3b8cdc3 (merged L06 window/controller slice)
+
+Full post-runtime Maven verification:
+Command: `mvn -B -ntp clean verify`
+Result: passed; 123 unit tests and 2 Testcontainers integration tests, 0
+failures, errors, or skips; JAR built. The integration tests are
+`ProcessingWindowKafkaIT` and `KafkaWorkerIT`.
+
+Focused failed-handoff test:
+Command: `mvn -B -ntp clean -Dit.test=KafkaWorkerIT verify`
+Result: passed; 123 unit tests and 1 Testcontainers Kafka worker integration
+test. Kafka's retry-topic `max.message.bytes` was temporarily lowered so the
+worker's retry send was rejected. During rejection, the main source's committed
+offset stayed at its pre-delivery value, the main handler count stayed at one
+for that record, and the retry handler did not see the job. Restoring the topic
+limit allowed the identical handoff to be delivered, then the source offset
+advanced. Rejected producer errors were logged at WARNING through the worker's
+producer exception handler; no unhandled event-loop error occurred.
+The integration test also verifies one successful attempt-2 handoff, successful
+source commits, and bounded DLQ records for malformed, oversized, and
+wrong-partition input.
+
+Compose runtime checks (task-owned project `l06-worker-runtime`):
+- `docker compose -p l06-worker-runtime config` — passed.
+- `docker compose -p l06-worker-runtime up --build --detach` — built and started
+  the Kafka broker and both worker roles.
+- `docker compose -p l06-worker-runtime up --scale retry-worker=2 --detach` —
+  passed; `docker compose ... ps -a` showed one main and two retry worker
+  containers, all running alongside a healthy Kafka broker.
+- `docker compose -p l06-worker-runtime --profile tools run --rm sample-producer`
+  — acknowledged job
+  `4ccf0571-3919-4362-8631-b00dd899e556`; fresh worker logs confirmed it was
+  handled. The initial run exposed a timer callback on the wrong Vert.x context.
+  After marshalling the adaptive-limiter callback through the worker context,
+  rebuilt Compose logs had no owner-context exception.
+- `docker compose -p l06-worker-runtime up --scale main-worker=0 --scale retry-worker=2 --detach`
+  followed by the sample producer — queued job
+  `96661225-7dbd-4bfc-b75f-4d5ea4a615ff` in main partition 11, offset 0, while
+  no main worker was running.
+- `docker compose -p l06-worker-runtime restart kafka`, then
+  `docker compose -p l06-worker-runtime up --wait kafka` and restoring one main
+  worker — broker became healthy and the queued job above was processed from
+  Kafka after restart.
+- Piped malformed JSON into `jobs.main.v1`; reading `jobs.dlq.v1` yielded one
+  `INVALID_JSON` record containing source coordinates, SHA-256 hashes, and a
+  bounded base64 sample.
+- Rebuilt latest image and ran the sample producer again; job
+  `4e0c49bf-5735-41c9-9d49-cb0f247ba4fe` was logged as handled.
+- Task-owned Compose broker and workers remain running; the named Kafka volume
+  was preserved. Other containers were not stopped or modified.
+
+Observed and corrected failures:
+- An early B16 assertion incorrectly expected an absent consumer-group offset
+  even though an earlier invalid record had already committed that partition.
+  The test now captures and compares the exact pre-delivery offset and record
+  offset for that partition.
+- The first producer rejection injection compiled with a stale Maven test
+  artifact and then used a legacy AdminClient config API. A clean compile
+  exposed the issue; the test now uses `incrementalAlterConfigs`, and the clean
+  focused integration passed.
+- Producer send rejections originally triggered Vert.x's unhandled exception
+  logger despite the send Future handler. Adding the Kafka producer
+  `exceptionHandler` makes asynchronous producer errors visible as warnings;
+  the clean focused test now passes without `SEVERE: Unhandled exception`.
+
+Acceptance status and remaining gaps:
+- B06: worker retry handoff and attempt increment passed in Testcontainers.
+- B14: count/byte component and real Vert.x pause/poll/commit/resume test passed;
+  complete worker batch/commit interaction under pressure remains only partial.
+- B16: rejected retry publication retained the source offset and did not rerun
+  the handler; recovery after the topic limit was restored passed.
+- B17: malformed, oversized, and wrong-partition worker inputs reached bounded
+  DLQ; Compose malformed-input DLQ also passed.
+- B18: queued work survived restart of the persistent single-broker Compose
+  container. Sustained broker outage behavior was not injected into Testcontainers.
+- B20: separate main/retry services, two retry replicas, DLQ, persistent volume,
+  and broker-restart replay were demonstrated in Compose.
+- B08 verified: `mvn -B -ntp clean verify` on e53a695 + uncommitted B08 test:
+  123 unit tests, KafkaWorkerIT (2 tests, per-test Kafka container), ProcessingWindowKafkaIT
+  all passed; 0 failures/skips. Permanent -> DLQ PERMANENT_HANDLER_FAILURE, handler ran once;
+  maxAttempts=2 -> ATTEMPTS_EXHAUSTED, attempts [1,2], offsets committed after DLQ.
+- B09/B20 verified: `mvn -B -ntp clean verify` (HEAD 3925338 + uncommitted): 123 unit,
+  KafkaWorkerIT 2, KafkaWorkerCrashIT 1 (child JVM kill -9, replay once, offset committed),
+  ProcessingWindowKafkaIT 1; 0 failures. KafkaWorkerIT passed 6/6 repeated runs after the
+  commit re-enqueue fix (was failing ~1/3). Crash test takes ~48s (group session timeout).
+- Still not verified at worker level: B15 out-of-order completion and independent
+  partition commits, B07/B13 controlled retry-rate/adaptive-limiter behavior,
+  B11 worker rebalance/stale callback
+  behavior, B19 unconfirmed cancellation, (B09/B20 now verified above).
+  Component-level unit cases do not substitute for those runtime scenarios.
+- CI/restricted-agent exercise and current full resolved-graph CVE rescan after
+  promoting Kafka clients to compile scope have not been run for this branch.
+  Earlier resolved graph and incremental Vert.x Kafka client scan results are
+  documented above and in session CVE artifacts.
+
+Whitespace after documentation updates:
+Command: `git diff --check`
+Result: pending at time of writing; record final result in the task record.
 
 Build-input SHA-256:
 47cee4cd709c358721fd265e26f04e4c49a779cae61a251b5c4b9d02b4bed551  pom.xml

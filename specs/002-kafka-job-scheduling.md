@@ -1,6 +1,6 @@
 # Spec 002: Immediate Kafka job processing with slower retries
 
-Status: **Draft — simplified architecture agreed; L01–L06 library components, a Vert.x Kafka pause/resume controller, and one broker-backed B14 check implemented; executable Kafka worker and full integration acceptance pending**
+Status: **Draft — Kafka main/retry worker runtime and Compose demo implemented; B06/B08/B09/B14/B16/B17/B20 have test or demo evidence; B14 worker-under-pressure, B15, sustained-outage B18, B19, worker-level B07/B11/B13, and GH-600 review evidence remain in progress**
 
 Project: `agentic-job-scheduler`
 Date: 2026-10-08
@@ -307,17 +307,19 @@ integration tests require Docker and must fail clearly if unavailable.
 | B20 | Compose demonstrates main/retry workers, DLQ, and replay without database/state store |
 
 Unit tests cover validation, queue exclusion, completion frontiers, limiter windows,
-retry rate/attempt calculations, envelope bounds, and L06 count/byte watermark
-behavior. One Testcontainers integration test uses the Vert.x Kafka consumer and
-controller to pause a partition, continue polling, commit, release window
-reservations, and resume. It does not cover rebalance handling or a complete
-worker runtime. L01 has unit validation tests; L02
-has bounded completion/commit state-machine tests and simulated crash/replay tests.
-Kafka handoff, retry/DLQ publication, partition routing, broker outage/restart,
-and full worker-runtime acceptance remain pending. L03 adds real Vert.x context
-tests for immediate dispatch, per-topic exclusion, concurrent different IDs, and
-controlled main/retry overlap; these establish component behavior, not broker
-integration acceptance.
+retry rate/attempt calculations, envelope bounds, count/byte watermarks, and a
+STUCK handler that retains its gate and incomplete record. Testcontainers cases
+exercise Vert.x pause/poll/commit/resume, a worker retry handoff, bounded DLQ
+routing for malformed/oversized/wrong-partition input, and a rejected retry send
+that leaves the source offset unchanged without rerunning the handler before
+successful handoff recovery. Compose has separately scalable main/retry processes;
+manual evidence covers two retry replicas, DLQ routing, persistent Kafka volume,
+and processing a queued record after broker restart. Remaining worker acceptance
+includes full worker-level out-of-order/independent-partition commit coverage,
+adaptive/rate behavior under controlled signals, worker rebalance ownership,
+unconfirmed cancellation, and replay after worker process loss. L03 component
+tests establish immediate dispatch, per-topic exclusion, different-ID concurrency,
+and controlled main/retry overlap, but do not replace those worker-level cases.
 
 ## 12. GH-600 learning workflow
 
