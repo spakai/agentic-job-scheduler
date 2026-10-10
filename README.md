@@ -2,9 +2,12 @@
 
 A Java 21 learning project for immediate Kafka job processing and GH-600 agent
 supervision. [Spec 002](specs/002-kafka-job-scheduling.md) defines the intended
-worker service. **Currently implemented: L01 envelope validation and L02 completion/
-offset tracking as library components.**
-There is no running Vert.x worker, Kafka consumer, limiter, or DLQ publisher yet.
+worker service. **Currently implemented: L01 envelope validation, L02 completion/
+offset tracking, and L03 Vert.x immediate dispatch as library components.**
+There is no executable Kafka worker, Kafka consumer, adaptive limiter, or DLQ publisher yet.
+
+See [Architecture through L01–L03](arch.md) for ASCII diagrams of topic ownership,
+per-job queues, safe commits, and the 108-test coverage summary.
 
 ## Build and test
 
@@ -91,6 +94,42 @@ handoff acknowledgment before commit can replay after a crash, including duplica
 handoffs. This follows Kafka's [manual offset/replay contract](https://kafka.apache.org/41/javadoc/org/apache/kafka/clients/consumer/KafkaConsumer.html).
 The adapter, leader-epoch metadata, actual commits, and broker tests remain pending.
 
+## Immediate dispatch API
+
+`ImmediateJobDispatcher` owns one topic and a fixed partition assignment on a
+Vert.x event-loop context. Construct and call it on that context. `submit()` takes
+`JobExecution(source, validatedJob, attempt)` and starts a per-job queue head as
+soon as fixed handler capacity is available. Different IDs can run concurrently;
+ready partitions take turns, with FIFO runnable job lanes within each partition.
+Main and retry dispatchers have independent gates and can overlap for the same ID.
+
+`JobHandler.execute()` must return promptly with a `Future<Void>` that completes
+only after the operation has actually stopped. Success completes the record and
+releases its gate. Failure releases handler capacity but leaves the job in
+`HANDOFF_PENDING`. Observe `Submission.handlerStopped()` and, after the future
+publisher's actual broker acknowledgment, call `handoffAcknowledged()` with
+`RETRY_ACKNOWLEDGED` or `DLQ_ACKNOWLEDGED`. Failed sends make no acknowledgment call
+and must not rerun the handler. L04 will add failure classification and publication.
+
+All state changes and commit calls run on the owner context; off-context calls
+are rejected and handler completions are marshalled back. Register fetched records
+in partition order, and use the dispatcher's `beginCommit()`/commit-result methods
+for L02's safe prefixes. Completed-but-uncommitted records still count toward the
+configured record bound. Rejected admission never permits dropping fetched work.
+
+Handlers must tolerate replay and concurrent duplicates; the stable identity is
+`execution.job().jobId()` plus `execution.job().executionId()`. A synchronous throw
+is permitted only before starting work. A null future violates the contract and
+leaves the submission `STUCK`, holding its gate and capacity. A future that never
+finishes also retains both; timeout/cancellation and recovery are not implemented.
+Do not complete a future early to simulate cancellation or block the event loop.
+
+This is a stable-assignment component with **fixed per-dispatcher capacity**.
+Process-wide adaptive limits, retry rate limits, byte/fetch backpressure, Kafka
+routing/commits, rebalance invalidation, and shutdown/drain remain future work.
+Tests use real Vert.x contexts and controlled futures, not Kafka. See the
+[L03 task record](docs/tasks/L03-immediate-processing.md) for its trace and handoff.
+
 ## Retry wire example
 
 ```json
@@ -120,12 +159,14 @@ ordering and at-least-once delivery limitations.
 ## Review and learning
 
 Start with the [L01 task record](docs/tasks/L01-envelope-validation.md),
-[L02 task record](docs/tasks/L02-completion-offsets.md), and the
+[L02 task record](docs/tasks/L02-completion-offsets.md),
+[L03 task record](docs/tasks/L03-immediate-processing.md), and the
 [GH-600 learning guide](docs/gh-600-learning-guide.md). B01 validation is covered;
 B17's invalid-input rejection is covered but wrong-partition detection and actual
-DLQ publication are not. Unit tests do not demonstrate handler safety, broker
-handoffs, concurrency, or retry execution.
+DLQ publication are not. Dispatcher tests demonstrate controlled concurrency and
+gate/offset behavior; they do not establish production handler safety, broker
+handoffs, or a complete retry worker.
 
-Pinned baseline dependencies: [Jackson 2.20.1](https://github.com/FasterXML/jackson/wiki/Jackson-Release-2.20.1)
+Pinned dependencies: Vert.x Core 5.2.1, [Jackson BOM 2.21.7](https://github.com/FasterXML/jackson/wiki/Jackson-Release-2.21.7),
 and [JUnit 5.14.1](https://docs.junit.org/5.14.1/_exports/junit-user-guide-5.14.1.html).
-No security scan has been performed as part of L01.
+L03 aligns Jackson with Vert.x; no security scan has been performed.

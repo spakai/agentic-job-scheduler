@@ -1,6 +1,6 @@
 # Spec 002: Immediate Kafka job processing with slower retries
 
-Status: **Draft — simplified architecture agreed; L01 validation and L02 completion/offset library implemented, worker runtime pending**
+Status: **Draft — simplified architecture agreed; L01–L03 validation, completion/offset, and Vert.x dispatcher components implemented; executable Kafka worker pending**
 
 Project: `agentic-job-scheduler`
 Date: 2026-10-08
@@ -310,8 +310,10 @@ Unit tests cover validation, queue exclusion, completion frontiers, limiter wind
 retry rate/attempt calculations, and envelope bounds. Integration tests establish
 Kafka handoff and replay behavior. L01 has unit validation tests; L02 has bounded
 completion/commit state-machine tests and simulated crash/replay tests. Kafka
-handoff, actual commits, DLQ publication, partition routing, and worker-runtime
-tests remain pending.
+handoff, actual commits, DLQ publication, partition routing, and full worker-runtime
+tests remain pending. L03 adds real Vert.x context tests for immediate dispatch,
+per-topic exclusion, concurrent different IDs, and controlled main/retry overlap;
+these establish component behavior, not broker integration acceptance.
 
 ## 12. GH-600 learning workflow
 
@@ -353,8 +355,10 @@ handoffs against the current commit. Preserve failed experiments and their
 corrections as evidence; never invent a successful run to fill a learning row.
 
 Current learning status: architecture/specification artifacts, L01's Maven
-foundation/validation, and L02's completion/offset library and unit tests exist.
+foundation/validation, L02's completion/offset library, and L03's Vert.x dispatcher
+and component tests exist. Basic GitHub Actions CI has been verified.
 L02 includes a tool inventory; learner review is pending. Worker runtime, integration evaluations,
 MCP configuration verification, multi-agent exercises, and GitHub enforcement
-controls have not yet been demonstrated. See the [L01 task record](../docs/tasks/L01-envelope-validation.md)
-and [L02 task record](../docs/tasks/L02-completion-offsets.md).
+controls have not yet been demonstrated. See the [L01 task record](../docs/tasks/L01-envelope-validation.md),
+[L02 task record](../docs/tasks/L02-completion-offsets.md), and
+[L03 task record](../docs/tasks/L03-immediate-processing.md).
