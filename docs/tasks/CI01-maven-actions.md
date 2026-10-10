@@ -41,16 +41,21 @@ Status: in progress
 | --- | --- | --- | --- | --- |
 | Unit/package | `d612d57` + workflow/docs | `mvn -B -ntp test`; `mvn -B -ntp package` | passed: 94 tests each, no failures/errors/skips | local Surefire reports; baseline commands repeated in CI |
 | Real PR run | pending | Maven CI | pending | pending |
-| Controlled failure | pending | temporary failing test | pending | pending |
+| Controlled failure | `beea4e2` | temporary failing test | expected failure: 95 tests, one intentional failure; reports uploaded, JAR skipped | [run 38018094448](https://github.com/spakai/agentic-job-scheduler/actions/runs/38018094448) |
 | Kafka/security scans | n/a | n/a | not run | out of scope |
 
 ## Failure analysis and correction
 
-- Pending validation; do not interpret planned checks as passes.
+- Controlled negative evaluation at `beea4e2`: intentional JUnit failure caused
+  the Maven step/job to fail. The report upload succeeded and JAR upload was skipped.
+  Downloaded the test-reports artifact and confirmed the failure was the deliberate
+  CI01 assertion. Removed the temporary test for the final positive run.
+- This is expected evaluation evidence, not a production defect.
 
 ## Handoff and review
 
-- Next: implement workflow, validate, publish PR, inspect real run and artifacts.
+- [PR #3](https://github.com/spakai/agentic-job-scheduler/pull/3) created as draft
+  while the negative probe was present. Next: verify final passing run and mark ready.
 - No production runtime code changes intended. L03 remains a separate increment.
 
 ## Learning check
