@@ -1,6 +1,6 @@
 # Spec 002: Immediate Kafka job processing with slower retries
 
-Status: **Draft — Kafka main/retry worker runtime and Compose demo implemented; B06/B14/B16/B17 and broker-restart replay have evidence; remaining B14–B20 acceptance and GH-600 review evidence are in progress**
+Status: **Draft — Kafka main/retry worker runtime and Compose demo implemented; B06/B08/B09/B14/B16/B17/B20 have test or demo evidence; B14 worker-under-pressure, B15, sustained-outage B18, B19, worker-level B07/B11/B13, and GH-600 review evidence remain in progress**
 
 Project: `agentic-job-scheduler`
 Date: 2026-10-08

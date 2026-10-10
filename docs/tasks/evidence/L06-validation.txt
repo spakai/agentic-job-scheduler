@@ -1,5 +1,24 @@
 L06 backpressure/recovery evidence — 2026-10-10
 
+Fresh health check of pushed feature snapshot:
+Commit: 7e9e7d090fa9c3823c30ffc0e75a6de88e756ca1
+Branch: feat/l06-worker-runtime
+Command: mvn -B -ntp clean verify
+Result: passed from a clean target directory. Maven compiled 22 production
+sources and 8 test sources, ran 123 unit tests and 4 Testcontainers integration
+tests (KafkaWorkerIT: 2, KafkaWorkerCrashIT: 1, ProcessingWindowKafkaIT: 1),
+with 0 failures, errors, or skips, and built the JAR.
+Evidence: current session command output, 2026-10-10.
+Expected injected-failure output: KafkaWorkerIT logged RecordTooLargeException
+warnings while exercising rejected retry sends; both integration cases passed
+and verified failed-handoff retention/recovery and DLQ behavior.
+Acceptance boundary: this run confirms only cases exercised by the suite. It
+does not close L06. Worker-level B15 out-of-order/independent-partition commits,
+B19 unconfirmed cancellation, B14 full worker-under-pressure behavior, sustained
+broker-outage B18, and worker-level B07/B11/B13 behavior remain unverified.
+The Compose demonstrations below are prior manual evidence, not part of this
+Maven invocation.
+
 Base commit: 8476630acaeea21bf1cc8538c2224e96b031f0b9 (merged L05)
 Branch: feat/l06-backpressure-recovery
 

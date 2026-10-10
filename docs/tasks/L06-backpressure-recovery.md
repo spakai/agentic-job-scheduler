@@ -151,11 +151,24 @@ Status: in progress
   Compose project `l06-worker-runtime` came back up (kafka healthy, main worker,
   two retry workers) with no exceptions in the last 10 minutes of worker logs.
   This adds no new acceptance coverage; the gaps listed below remain open.
+- 2026-10-10 (health check on pushed snapshot `7e9e7d0`): ran
+  `mvn -B -ntp clean verify` from the feature branch after recovering the branch
+  onto healthy `origin/main` history. A clean build compiled 22 production and
+  eight test sources; all 123 unit tests and four Testcontainers integration
+  tests passed (0 failures, errors, or skips), and Maven built the JAR. The four
+  integrations were two `KafkaWorkerIT` cases, one `KafkaWorkerCrashIT` case,
+  and one `ProcessingWindowKafkaIT` case. This verifies the code on the pushed
+  snapshot but does not close L06: the worker-level B15/B19, B14 under-pressure
+  integration, sustained broker-outage B18, and worker-level B07/B11/B13 cases
+  remain unverified. The run emitted expected `RecordTooLargeException`
+  warnings from the injected failed-handoff test; that test passed after
+  verifying the source offset stayed put and recovery succeeded.
 
 ## Evaluation
 
 | Check | Commit | Command or workflow | Result | Evidence |
 | --- | --- | --- | --- | --- |
+| Fresh health check of pushed feature snapshot | `7e9e7d0` | `mvn -B -ntp clean verify` | passed: 123 unit tests and 4 Testcontainers integration tests; 0 failures/errors/skips; JAR built | current session output; [L06 validation evidence](evidence/L06-validation.txt) |
 | Merged L05 baseline | `8476630` | `mvn -B -ntp clean test` | passed: 115 tests, 0 failures/errors/skips | session output; retain final L06 evidence |
 | Processing-window component (partial B14) | working tree | `mvn -B -ntp -Dtest=ProcessingWindowTest test` | passed: 5 tests, 0 failures/errors/skips | [L06 validation evidence](evidence/L06-validation.txt) |
 | Vert.x Kafka pause/poll/commit/resume (partial B14) | working tree | `mvn -B -ntp -Dit.test=ProcessingWindowKafkaIT verify` | passed: 120 unit tests and 1 Testcontainers Vert.x Kafka integration test, 0 failures/errors/skips | [L06 validation evidence](evidence/L06-validation.txt) |
@@ -212,14 +225,18 @@ during a sustained broker outage.
 
 ## Handoff and review
 
-- Latest verified base commit and working-tree changes: `3b8cdc3` on
-  `feat/l06-worker-runtime`; current changes are uncommitted and include runtime,
-  integration, Compose, README/spec/task/evidence updates. Final evidence is in
-  [L06 validation evidence](evidence/L06-validation.txt).
-  unrelated pre-existing `.vscode/` remains untouched.
+- Latest verified commit: `7e9e7d0` on `feat/l06-worker-runtime`; the feature
+  snapshot is pushed to `origin/feat/l06-worker-runtime`. Its committed tree
+  matches the original feature snapshot. The original local history, which
+  contained missing Git objects and could not be pushed, is preserved locally
+  as `backup/feat-l06-worker-runtime-corrupt-history`. The current health-check
+  documentation changes are pending commit. Unrelated untracked
+  `.vscode/settings.json` remains untouched.
 - Completed steps: implemented executable main/retry workers and Compose demo;
-  verified the full Maven suite, broker retry/DLQ and failed-send recovery, and
-  Compose scaling/DLQ/persistent broker restart.
+  fresh `mvn -B -ntp clean verify` passed on `7e9e7d0` with 123 unit tests and
+  four Testcontainers integration tests; prior evidence records broker
+  retry/DLQ, crash/replay, failed-send recovery, and Compose scaling/DLQ/
+  persistent broker restart.
 - Next concrete step: address the remaining B14–B20 gaps listed above, update
   evidence after each actual check, and only close L06 when the acceptance table
   is adequately covered.
