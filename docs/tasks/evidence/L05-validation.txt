@@ -1,0 +1,44 @@
+L05 validation evidence — 2026-10-10
+
+Base commit: 156139c180302b01c4f9ff1d2b7d784a87b6f1b2
+Branch: feat/l05-replay-rebalances; uncommitted working tree
+
+Focused dispatcher lifecycle tests:
+Command: mvn -B -ntp -Dtest=ImmediateJobDispatcherTest test
+Result: passed; 17 tests, 0 failures, 0 errors, 0 skipped.
+
+Full clean test suite:
+Command: mvn -B -ntp clean test
+Result: passed; 115 tests, 0 failures, 0 errors, 0 skipped.
+
+Clean package and regression suite:
+Command: mvn -B -ntp clean package
+Result: passed; 115 tests, 0 failures, 0 errors, 0 skipped; built
+target/agentic-job-scheduler-0.1.0-SNAPSHOT.jar.
+
+Whitespace:
+Command: git diff --check
+Result: passed.
+
+Editor diagnostics:
+ImmediateJobDispatcher.java and ImmediateJobDispatcherTest.java
+Result: no errors reported.
+
+Acceptance evidence:
+- B09: OffsetCommitTrackerTest.simulatedCrashAfterCompletionBeforeCommitReplays
+  simulates record replay after completion before broker commit.
+- B10: ImmediateJobDispatcherTest.replayKeepsIdentityAndRunsAgainWithoutDeduplication
+  verifies stable invocation identity and duplicate execution.
+- B11: three L05 dispatcher tests verify revoked owners stop dispatch and ignore
+  delayed handler, handoff, and commit callbacks.
+- B12: ImmediateJobDispatcherTest.mainAndRetryHaveIndependentGatesAndPreserveHandlerIdentity
+  verifies allowed main/retry overlap for a shared jobId.
+
+No Kafka consumer-group rebalance, live broker crash, broker-side stale commit,
+handler cancellation, or external-effect fencing test exists in this increment.
+No claim is made for those integration behaviors.
+
+Build-input SHA-256:
+a00129d62580f6f7bb9200c39d0c2f7ba9e349bcdd6c126deafd90606a5d77e1  src/main/java/com/example/agenticjobscheduler/execution/ImmediateJobDispatcher.java
+6c6154b0dd3c2c4f064373925c25f5243f37bedd231bd76fd2e472b875d108e2  src/test/java/com/example/agenticjobscheduler/execution/ImmediateJobDispatcherTest.java
+38fa01ae7b3a505cf3ae3ea922fc37d56b1cd923a139a40c86a332e7450cbddb  arch.md

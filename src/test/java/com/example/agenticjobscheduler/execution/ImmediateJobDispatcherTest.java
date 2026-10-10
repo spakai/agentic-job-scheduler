@@ -315,6 +315,89 @@ class ImmediateJobDispatcherTest {
     }
 
     @Test
+    void revocationStopsDispatchAndIgnoresLateHandlerCompletion() throws Exception {
+        var handler = new ControlledHandler();
+        var dispatcher = create(MAIN, 1, 10, handler);
+        var runningExecution = job(MAIN, 0, 10, A, 101);
+        var queuedExecution = job(MAIN, 0, 11, B, 201);
+        var running = on(() -> dispatcher.submit(runningExecution));
+        var queued = on(() -> dispatcher.submit(queuedExecution));
+
+        on(() -> {
+            dispatcher.revokeOwnership();
+            assertTrue(dispatcher.isOwnershipRevoked());
+            assertThrows(IllegalStateException.class,
+                    () -> dispatcher.submit(job(MAIN, 0, 12, new UUID(0, 3), 301)));
+            return null;
+        });
+        handler.succeed(runningExecution);
+
+        on(() -> {
+            assertEquals(RUNNING, dispatcher.state(running));
+            assertEquals(QUEUED, dispatcher.state(queued));
+            assertEquals(1, dispatcher.activeHandlers());
+            assertEquals(2, dispatcher.retainedRecords());
+            assertTrue(dispatcher.beginCommit().isEmpty());
+            return null;
+        });
+        assertFalse(running.handlerStopped().isComplete());
+        assertEquals(List.of(runningExecution), handler.starts);
+    }
+
+    @Test
+    void revocationIgnoresLateHandoffAcknowledgment() throws Exception {
+        var handler = new ControlledHandler();
+        var dispatcher = create(MAIN, 1, 10, handler);
+        var execution = job(MAIN, 0, 10, A, 101);
+        var submission = on(() -> dispatcher.submit(execution));
+        handler.fail(execution);
+        assertEquals(ImmediateJobDispatcher.HandlerResult.FAILURE, await(submission.handlerStopped()));
+
+        on(() -> {
+            dispatcher.revokeOwnership();
+            dispatcher.handoffAcknowledged(submission, RETRY_ACKNOWLEDGED);
+            assertEquals(HANDOFF_PENDING, dispatcher.state(submission));
+            assertEquals(1, dispatcher.retainedRecords());
+            assertTrue(dispatcher.beginCommit().isEmpty());
+            return null;
+        });
+    }
+
+    @Test
+    void revokedCommitCallbackCannotReleaseReplayableWorkForFreshOwner() throws Exception {
+        var oldHandler = new ControlledHandler();
+        var oldOwner = create(MAIN, 1, 10, oldHandler);
+        var execution = job(MAIN, 0, 10, A, 101);
+        var oldSubmission = on(() -> oldOwner.submit(execution));
+        oldHandler.succeed(execution);
+        await(oldSubmission.handlerStopped());
+        var staleBatch = on(() -> oldOwner.beginCommit().orElseThrow());
+
+        on(() -> {
+            oldOwner.revokeOwnership();
+            oldOwner.commitSucceeded(staleBatch);
+            oldOwner.commitFailed(staleBatch);
+            assertEquals(1, oldOwner.retainedRecords());
+            assertTrue(oldOwner.beginCommit().isEmpty());
+            return null;
+        });
+
+        var newHandler = new ControlledHandler();
+        var newOwner = create(MAIN, 1, 10, newHandler);
+        var replay = on(() -> newOwner.submit(execution));
+        assertEquals(List.of(execution), newHandler.starts);
+        newHandler.succeed(execution);
+        await(replay.handlerStopped());
+        var newBatch = on(() -> newOwner.beginCommit().orElseThrow());
+        assertEquals(11L, newBatch.offsets().get(new OffsetCommitTracker.Partition(MAIN, 0)));
+        on(() -> {
+            newOwner.commitSucceeded(newBatch);
+            assertEquals(0, newOwner.retainedRecords());
+            return null;
+        });
+    }
+
+    @Test
     void replayKeepsIdentityAndRunsAgainWithoutDeduplication() throws Exception {
         var handler = new ControlledHandler();
         var dispatcher = create(MAIN, 1, 10, handler);
