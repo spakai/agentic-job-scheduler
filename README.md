@@ -2,7 +2,8 @@
 
 A Java 21 learning project for immediate Kafka job processing and GH-600 agent
 supervision. [Spec 002](specs/002-kafka-job-scheduling.md) defines the intended
-worker service. **Currently implemented: L01 main/retry envelope validation only.**
+worker service. **Currently implemented: L01 envelope validation and L02 completion/
+offset tracking as library components.**
 There is no running Vert.x worker, Kafka consumer, limiter, or DLQ publisher yet.
 
 ## Build and test
@@ -46,6 +47,37 @@ beyond 256 KiB main / 512 KiB retry limits. Payloads must be JSON objects and ar
 returned as defensive copies. JSON nesting is capped at 100 main levels (101 for the retry wrapper) and
 numeric tokens at 1,000 characters. Partition routing needs Kafka metadata and is deferred.
 
+## Completion and offset API
+
+`com.example.agenticjobscheduler.execution.OffsetCommitTracker` tracks a fixed set
+of assigned topic partitions with a configurable total retained-record bound.
+Use one owner context for every call; this class is not thread-safe.
+
+1. Register every fetched record in increasing partition-offset order with
+   `delivered(SourceRecord)`, before dispatch. Retain its opaque delivery handle.
+2. Call `complete(handle, outcome)` only on handler success, retry acknowledgment,
+   or DLQ acknowledgment. Pending/failed sends leave the source incomplete.
+3. `beginCommit()` returns an optional immutable map of explicit next offsets.
+   Send that snapshot through the future Kafka adapter. It cannot cross an
+   incomplete delivered record, handles offset gaps, and advances partitions
+   independently. Another request cannot begin until this one finishes.
+4. Report the exact request to `commitSucceeded(batch)` or `commitFailed(batch)`.
+   Success frees only the acknowledged prefix; failure retains all results for
+   retry. Report synchronous send failures too. Do not release an outstanding
+   request merely because a local timer expired.
+
+The bound includes completed-but-uncommitted records. Admission failure requires
+the caller to retain fetched work and pause intake, never drop records. Payload
+byte limits, fetch overshoot, process-wide accounting, and pause/resume are not
+implemented here. Rebuild the tracker on ownership changes; the future runtime
+must invalidate old callbacks and handle revocations before using a new tracker.
+
+Tests establish B05/B15 library behavior and **simulate** B09 crash/replay using a
+fake broker offset store. They do not establish live Kafka durability. Success or
+handoff acknowledgment before commit can replay after a crash, including duplicate
+handoffs. This follows Kafka's [manual offset/replay contract](https://kafka.apache.org/41/javadoc/org/apache/kafka/clients/consumer/KafkaConsumer.html).
+The adapter, leader-epoch metadata, actual commits, and broker tests remain pending.
+
 ## Retry wire example
 
 ```json
@@ -74,7 +106,8 @@ ordering and at-least-once delivery limitations.
 
 ## Review and learning
 
-Start with the [L01 task record](docs/tasks/L01-envelope-validation.md) and the
+Start with the [L01 task record](docs/tasks/L01-envelope-validation.md),
+[L02 task record](docs/tasks/L02-completion-offsets.md), and the
 [GH-600 learning guide](docs/gh-600-learning-guide.md). B01 validation is covered;
 B17's invalid-input rejection is covered but wrong-partition detection and actual
 DLQ publication are not. Unit tests do not demonstrate handler safety, broker

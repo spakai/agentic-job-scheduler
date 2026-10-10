@@ -1,0 +1,125 @@
+L02 validation evidence — 2026-10-10
+
+Base commit: d677cdd53c99383b7acb0e72a23f9d1da9b2d6f2
+Branch: feat/l02-completion-offsets; uncommitted working tree
+Results: unit test and package passed; 94 tests each (77 L01 + 17 L02), no failures/errors/skips.
+Whitespace: git diff --check passed; Python checked new source/test/task files for trailing whitespace and final newline.
+No live Kafka integration tests or security scans run. Crash tests use a simulated broker store.
+
+Build-input SHA-256:
+ac6e1a1445603bce75274ffd1d0e4ca4aad0b4aa6872ca21f1f972d2206c99ed  pom.xml
+84915a800acff259290ae9117742345f9f672112d53b8dff53ff367de18636c0  src/main/java/com/example/agenticjobscheduler/execution/OffsetCommitTracker.java
+1c2e7a51df026a81a8f2e356b7994fbadcbed956f72157987b9dfb15a9f04359  src/main/java/com/example/agenticjobscheduler/messaging/EnvelopeValidationException.java
+dac045b68a9a2f12da2c27afd5bca18c5af8f06c0b0d36eda4779e3dab092c30  src/main/java/com/example/agenticjobscheduler/messaging/EnvelopeValidator.java
+e71b6fe1dec6f50e338a519f8c92339fb26ba9029f0e61712ecb1425066e75d2  src/main/java/com/example/agenticjobscheduler/messaging/JobEnvelope.java
+27f08ca4da6ce765630a99a66025eee7fa539a4626072d4a6077c5e2fc7a697a  src/main/java/com/example/agenticjobscheduler/messaging/RetryEnvelope.java
+e0b88785de23b282d248a6a892dbe00e4782d75f7b8d04925cb94cfc178b25bf  src/main/java/com/example/agenticjobscheduler/messaging/SourceRecord.java
+49aa970dd761d6e137d30ff19df96f9933195a2b98ab120ef7ddde656ee44fd6  src/test/java/com/example/agenticjobscheduler/execution/OffsetCommitTrackerTest.java
+5c9d4d4d850f0223ca6e97b36c38f6b6aa8126b3136cfbd98ef35eb4cf7f7421  src/test/java/com/example/agenticjobscheduler/messaging/EnvelopeValidatorTest.java
+
+Command: mvn -B -ntp test (exit 0)
+[INFO] Scanning for projects...
+[INFO]
+[INFO] -----------------< com.example:agentic-job-scheduler >------------------
+[INFO] Building agentic-job-scheduler 0.1.0-SNAPSHOT
+[INFO] --------------------------------[ jar ]---------------------------------
+[INFO]
+[INFO] --- maven-resources-plugin:3.3.1:resources (default-resources) @ agentic-job-scheduler ---
+[INFO] skip non existing resourceDirectory /home/spakai/agentic-job-scheduler/src/main/resources
+[INFO]
+[INFO] --- maven-compiler-plugin:3.14.1:compile (default-compile) @ agentic-job-scheduler ---
+[INFO] Recompiling the module because of added or removed source files.
+[INFO] Compiling 6 source files with javac [debug release 21] to target/classes
+[INFO]
+[INFO] --- maven-resources-plugin:3.3.1:testResources (default-testResources) @ agentic-job-scheduler ---
+[INFO] skip non existing resourceDirectory /home/spakai/agentic-job-scheduler/src/test/resources
+[INFO]
+[INFO] --- maven-compiler-plugin:3.14.1:testCompile (default-testCompile) @ agentic-job-scheduler ---
+[INFO] Recompiling the module because of changed dependency.
+[INFO] Compiling 2 source files with javac [debug release 21] to target/test-classes
+[INFO]
+[INFO] --- maven-surefire-plugin:3.5.4:test (default-test) @ agentic-job-scheduler ---
+[INFO] Using auto detected provider org.apache.maven.surefire.junitplatform.JUnitPlatformProvider
+[INFO]
+[INFO] -------------------------------------------------------
+[INFO]  T E S T S
+[INFO] -------------------------------------------------------
+[INFO] Running com.example.agenticjobscheduler.messaging.EnvelopeValidatorTest
+[INFO] Tests run: 77, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.573 s -- in com.example.agenticjobscheduler.messaging.EnvelopeValidatorTest
+[INFO] Running com.example.agenticjobscheduler.execution.OffsetCommitTrackerTest
+[INFO] Tests run: 17, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.046 s -- in com.example.agenticjobscheduler.execution.OffsetCommitTrackerTest
+[INFO]
+[INFO] Results:
+[INFO]
+[INFO] Tests run: 94, Failures: 0, Errors: 0, Skipped: 0
+[INFO]
+[INFO] ------------------------------------------------------------------------
+[INFO] BUILD SUCCESS
+[INFO] ------------------------------------------------------------------------
+[INFO] Total time:  3.841 s
+[INFO] Finished at: 2026-10-10T10:32:47+08:00
+[INFO] ------------------------------------------------------------------------
+
+
+Command: mvn -B -ntp package (exit 0)
+[INFO] Scanning for projects...
+[INFO]
+[INFO] -----------------< com.example:agentic-job-scheduler >------------------
+[INFO] Building agentic-job-scheduler 0.1.0-SNAPSHOT
+[INFO] --------------------------------[ jar ]---------------------------------
+[INFO]
+[INFO] --- maven-resources-plugin:3.3.1:resources (default-resources) @ agentic-job-scheduler ---
+[INFO] skip non existing resourceDirectory /home/spakai/agentic-job-scheduler/src/main/resources
+[INFO]
+[INFO] --- maven-compiler-plugin:3.14.1:compile (default-compile) @ agentic-job-scheduler ---
+[INFO] Nothing to compile - all classes are up to date.
+[INFO]
+[INFO] --- maven-resources-plugin:3.3.1:testResources (default-testResources) @ agentic-job-scheduler ---
+[INFO] skip non existing resourceDirectory /home/spakai/agentic-job-scheduler/src/test/resources
+[INFO]
+[INFO] --- maven-compiler-plugin:3.14.1:testCompile (default-testCompile) @ agentic-job-scheduler ---
+[INFO] Nothing to compile - all classes are up to date.
+[INFO]
+[INFO] --- maven-surefire-plugin:3.5.4:test (default-test) @ agentic-job-scheduler ---
+[INFO] Using auto detected provider org.apache.maven.surefire.junitplatform.JUnitPlatformProvider
+[INFO]
+[INFO] -------------------------------------------------------
+[INFO]  T E S T S
+[INFO] -------------------------------------------------------
+[INFO] Running com.example.agenticjobscheduler.messaging.EnvelopeValidatorTest
+[INFO] Tests run: 77, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.770 s -- in com.example.agenticjobscheduler.messaging.EnvelopeValidatorTest
+[INFO] Running com.example.agenticjobscheduler.execution.OffsetCommitTrackerTest
+[INFO] Tests run: 17, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.048 s -- in com.example.agenticjobscheduler.execution.OffsetCommitTrackerTest
+[INFO]
+[INFO] Results:
+[INFO]
+[INFO] Tests run: 94, Failures: 0, Errors: 0, Skipped: 0
+[INFO]
+[INFO]
+[INFO] --- maven-jar-plugin:3.4.2:jar (default-jar) @ agentic-job-scheduler ---
+[INFO] Building jar: /home/spakai/agentic-job-scheduler/target/agentic-job-scheduler-0.1.0-SNAPSHOT.jar
+[INFO] ------------------------------------------------------------------------
+[INFO] BUILD SUCCESS
+[INFO] ------------------------------------------------------------------------
+[INFO] Total time:  1.445 s
+[INFO] Finished at: 2026-10-10T10:33:25+08:00
+[INFO] ------------------------------------------------------------------------
+
+
+Tool inventory observations:
+java -version: OpenJDK 21.0.12.1
+mvn -version: Maven 3.6.3, Java 21.0.12.1
+docker version: exit 1; command unavailable in this WSL 2 distro; WSL integration recommended by command output.
+command -v: docker shim and gh present; copilot not found.
+gh pr view 1 --json state,mergedAt,baseRefName,headRefName: MERGED, 2026-10-08T07:41:10Z, main, feat/l01-envelope-validation.
+gh api repos/spakai/agentic-job-scheduler --jq {full_name,permissions}: read succeeded; admin/maintain/pull/push/triage all true.
+git fetch origin main: succeeded; d677cdd is merged L01; starting tree clean.
+GitHub connector read/write tools exposed; not exercised. No MCP configuration or denied-operation test performed.
+Effective shell permissions: unrestricted filesystem/network; approval policy never. No technically enforced read-only restriction demonstrated.
+
+Docker recheck — 2026-10-10, after user started Docker Desktop:
+Command: docker version (exit 0)
+Client: 29.3.1; API 1.54; linux/amd64; context default.
+Server: Docker Desktop 4.68.0 (223695); Engine 29.3.1; API 1.54.
+This supersedes the earlier unavailable-Docker observation. No containers were
+started and no Kafka integration tests were run; the integration suite is absent.

@@ -179,8 +179,8 @@ grant broad permissions merely to make a failing workflow turn green.
 | --- | --- |
 | Kafka architectural specification | Simplified for immediate main/retry processing; runtime not implemented |
 | Learning workflow and templates | Written; exercises not yet run |
-| Runtime implementation / Maven build | L01 Maven foundation and validators implemented; worker runtime pending |
-| Actual automated evaluations and scans | L01 unit validation executed; integration tests and scans pending |
+| Runtime implementation / Maven build | L01 validators and L02 completion/offset library implemented; worker runtime pending |
+| Actual automated evaluations and scans | L01/L02 unit checks executed, including simulated replay; integration tests and scans pending |
 | Copilot/MCP setup and permissions exercise | Not verified |
 | Fresh-session memory exercise | Not run |
 | Multi-agent exercise | Not run |
@@ -191,3 +191,8 @@ study guide again before exam preparation to catch changed objectives and topics
 not exercised here.
 
 First implementation evidence: [L01 task record](tasks/L01-envelope-validation.md).
+
+L02 implementation and tool inventory: [task record](tasks/L02-completion-offsets.md).
+The Copilot/MCP setup and denied-operation exercise remain unverified; the local
+tool inventory does not establish an enforced read-only boundary. Learner review
+and the check of understanding are still required to finish the learning exercise.
