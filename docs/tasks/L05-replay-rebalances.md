@@ -64,11 +64,11 @@ Status: ready for review
 
 | Check | Commit | Command or workflow | Result | Evidence |
 | --- | --- | --- | --- | --- |
-| Focused dispatcher tests | `156139c` + working tree | `mvn -B -ntp -Dtest=ImmediateJobDispatcherTest test` | passed: 17 tests, 0 failures/errors/skips | [L05 validation evidence](evidence/L05-validation.txt) |
-| Full suite, including replay/identity/overlap (B09/B10/B12) and stale callbacks (B11) | `156139c` + working tree | `mvn -B -ntp clean test` | passed: 115 tests, 0 failures/errors/skips | [L05 validation evidence](evidence/L05-validation.txt) |
-| Clean library package | `156139c` + working tree | `mvn -B -ntp clean package` | passed: 115 tests; JAR built | [L05 validation evidence](evidence/L05-validation.txt) |
-| Diff whitespace | `156139c` + working tree | `git diff --check` | passed | [L05 validation evidence](evidence/L05-validation.txt) |
-| Editor diagnostics | `156139c` + working tree | Problems panel for dispatcher and test | no errors | [L05 validation evidence](evidence/L05-validation.txt) |
+| Focused dispatcher tests | `a254c45` | `mvn -B -ntp -Dtest=ImmediateJobDispatcherTest test` | passed: 17 tests, 0 failures/errors/skips | [L05 validation evidence](evidence/L05-validation.txt) |
+| Full suite, including replay/identity/overlap (B09/B10/B12) and stale callbacks (B11) | `a254c45` | `mvn -B -ntp clean test` | passed: 115 tests, 0 failures/errors/skips | [L05 validation evidence](evidence/L05-validation.txt) |
+| Clean library package | `a254c45` | `mvn -B -ntp clean package` | passed: 115 tests; JAR built | [L05 validation evidence](evidence/L05-validation.txt) |
+| Diff whitespace | `a254c45` | `git diff --check` | passed | [L05 validation evidence](evidence/L05-validation.txt) |
+| Editor diagnostics | `a254c45` | Problems panel for dispatcher and test | no errors | [L05 validation evidence](evidence/L05-validation.txt) |
 | Kafka rebalance/crash integration | n/a | runtime/suite not implemented | not run | no integration claim |
 
 Negative cases verify that a late handler completion cannot dispatch queued work,
@@ -87,20 +87,20 @@ result cannot release records. A fresh owner can replay and complete the work.
 
 ## Handoff and review
 
-- Latest verified commit and working-tree changes: base
-  `156139c180302b01c4f9ff1d2b7d784a87b6f1b2` plus L05 changes on
+- Latest verified implementation commit: `a254c45`
+  (`feat: invalidate revoked dispatcher ownership`) on
   `feat/l05-replay-rebalances`; validation input hashes are in
   [L05 validation evidence](evidence/L05-validation.txt). Pre-existing untracked
   `.vscode/` is unrelated and was preserved.
 - Completed steps: reviewed Spec 002, added context-confined revocation and stale
   callback guards, added replay/revoke tests, updated architecture and recorded
   passing focused/full/package checks.
-- Next concrete step: review the diff; then decide whether to commit and publish a PR.
+- Next concrete step: address review feedback on [PR #6](https://github.com/spakai/agentic-job-scheduler/pull/6).
 - Open risks/decisions and owner: callers must discard a revoked dispatcher and
   create a fresh instance for reassigned partitions; adapter and handler owners
   must tolerate replay and possible continuing external work.
 - Reviewer findings and disposition: pending
-- PR / final outcome: local branch is ready for review; no commit or PR created.
+- PR / final outcome: committed as `a254c45` and opened [PR #6](https://github.com/spakai/agentic-job-scheduler/pull/6); awaiting review.
 
 ## Learning check
 

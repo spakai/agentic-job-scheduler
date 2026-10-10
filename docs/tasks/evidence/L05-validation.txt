@@ -1,7 +1,8 @@
 L05 validation evidence — 2026-10-10
 
 Base commit: 156139c180302b01c4f9ff1d2b7d784a87b6f1b2
-Branch: feat/l05-replay-rebalances; uncommitted working tree
+Implementation commit: a254c45 (feat: invalidate revoked dispatcher ownership)
+Branch: feat/l05-replay-rebalances
 
 Focused dispatcher lifecycle tests:
 Command: mvn -B -ntp -Dtest=ImmediateJobDispatcherTest test
@@ -42,3 +43,5 @@ Build-input SHA-256:
 a00129d62580f6f7bb9200c39d0c2f7ba9e349bcdd6c126deafd90606a5d77e1  src/main/java/com/example/agenticjobscheduler/execution/ImmediateJobDispatcher.java
 6c6154b0dd3c2c4f064373925c25f5243f37bedd231bd76fd2e472b875d108e2  src/test/java/com/example/agenticjobscheduler/execution/ImmediateJobDispatcherTest.java
 38fa01ae7b3a505cf3ae3ea922fc37d56b1cd923a139a40c86a332e7450cbddb  arch.md
+
+Pull request: https://github.com/spakai/agentic-job-scheduler/pull/6
