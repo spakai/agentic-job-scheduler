@@ -68,6 +68,52 @@ class ImmediateJobDispatcherTest {
     }
 
     @Test
+    void terminalInvalidDeliveryWaitsForDlqAckAndCommitsCompletedOffsetPrefix() throws Exception {
+        var dispatcher = create(MAIN, 1, 10, new ControlledHandler());
+        Promise<Void> firstPublication = Promise.promise();
+        var deliveries = on(() -> {
+            var first = dispatcher.submitTerminal(
+                    new SourceRecord(MAIN, 0, 10), firstPublication::future);
+            var later = dispatcher.submitTerminal(
+                    new SourceRecord(MAIN, 0, 12), Future::succeededFuture);
+            assertTrue(dispatcher.beginCommit().isEmpty());
+            return List.of(first, later);
+        });
+        await(deliveries.get(1));
+        assertTrue(on(dispatcher::beginCommit).isEmpty());
+
+        firstPublication.complete();
+        await(deliveries.getFirst());
+        var batch = on(() -> dispatcher.beginCommit().orElseThrow());
+        assertEquals(13L, batch.offsets().get(new OffsetCommitTracker.Partition(MAIN, 0)));
+        on(() -> {
+            dispatcher.commitSucceeded(batch);
+            assertEquals(0, dispatcher.retainedRecords());
+            return null;
+        });
+    }
+
+    @Test
+    void dispatcherCanResizeWithoutCancellingRunningWork() throws Exception {
+        var handler = new ControlledHandler();
+        var dispatcher = create(MAIN, 1, 10, handler);
+        var executions = List.of(job(MAIN, 0, 0, A, 101), job(MAIN, 1, 0, B, 201));
+        var submissions = on(() -> {
+            var first = dispatcher.submit(executions.getFirst());
+            var second = dispatcher.submit(executions.get(1));
+            assertEquals(1, dispatcher.activeHandlers());
+            assertEquals(1, dispatcher.queuedRecords(context));
+            dispatcher.setCapacity(2);
+            assertEquals(2, dispatcher.activeHandlers());
+            return List.of(first, second);
+        });
+        handler.succeed(executions.getFirst());
+        handler.succeed(executions.get(1));
+        await(submissions.getFirst().handlerStopped());
+        await(submissions.get(1).handlerStopped());
+    }
+
+    @Test
     void sameJobIsFifoWhileDifferentJobInSamePartitionOverlapsAndOffsetsStaySafe() throws Exception {
         var handler = new ControlledHandler();
         var dispatcher = create(MAIN, 2, 10, handler);

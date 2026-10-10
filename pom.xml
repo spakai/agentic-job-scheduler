@@ -52,6 +52,11 @@
       <version>${vertx.version}</version>
     </dependency>
     <dependency>
+      <groupId>org.apache.kafka</groupId>
+      <artifactId>kafka-clients</artifactId>
+      <version>${kafka.version}</version>
+    </dependency>
+    <dependency>
       <groupId>com.fasterxml.jackson.core</groupId>
       <artifactId>jackson-databind</artifactId>
     </dependency>
@@ -65,12 +70,6 @@
       <groupId>org.testcontainers</groupId>
       <artifactId>kafka</artifactId>
       <version>1.21.4</version>
-      <scope>test</scope>
-    </dependency>
-    <dependency>
-      <groupId>org.apache.kafka</groupId>
-      <artifactId>kafka-clients</artifactId>
-      <version>${kafka.version}</version>
       <scope>test</scope>
     </dependency>
     <dependency>

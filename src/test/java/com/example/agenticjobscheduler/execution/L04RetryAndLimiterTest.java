@@ -51,4 +51,12 @@ class L04RetryAndLimiterTest {
         }
         assertEquals(8, capped.applyWindow(true, 200L, 0.00, false, false));
     }
+
+    @Test
+    void adaptiveLimiterHoldsInsufficientWindowsExceptForThrottleSignals() {
+        var limiter = new AdaptiveLimiter();
+        assertEquals(16, limiter.applyWindow(true, 1_500L, 0.20, false, false, 19));
+        assertEquals(8, limiter.applyWindow(true, 1_500L, 0.20, false, false, 20));
+        assertEquals(4, limiter.applyWindow(true, 500L, 0.00, true, false, 0));
+    }
 }

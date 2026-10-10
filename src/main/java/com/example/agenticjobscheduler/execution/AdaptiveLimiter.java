@@ -39,13 +39,24 @@ public final class AdaptiveLimiter {
 
     public int applyWindow(boolean backlogPresent, long p95LatencyMs, double transientFailureRate,
             boolean throttled, boolean timedOut) {
+        return applyWindow(backlogPresent, p95LatencyMs, transientFailureRate, throttled, timedOut, 20);
+    }
+
+    public int applyWindow(boolean backlogPresent, long p95LatencyMs, double transientFailureRate,
+            boolean throttled, boolean timedOut, long completedAttempts) {
         if (p95LatencyMs < 0) {
             throw new IllegalArgumentException("Latency must be non-negative");
         }
         if (transientFailureRate < 0.0 || transientFailureRate > 1.0) {
             throw new IllegalArgumentException("Failure rate must be between 0 and 1");
         }
+        if (completedAttempts < 0) {
+            throw new IllegalArgumentException("Completed attempts must be non-negative");
+        }
         samples++;
+        if (completedAttempts < 20 && !throttled) {
+            return limit;
+        }
         boolean slow = p95LatencyMs > 1000L;
         boolean unstable = transientFailureRate >= 0.10 || throttled || timedOut;
         if (slow || unstable) {

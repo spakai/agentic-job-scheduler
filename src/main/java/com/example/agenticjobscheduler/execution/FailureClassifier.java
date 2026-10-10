@@ -15,6 +15,9 @@ public final class FailureClassifier {
         if (failure == null) {
             return FailureType.PERMANENT;
         }
+        if (failure instanceof PermanentJobFailure) {
+            return FailureType.PERMANENT;
+        }
         if (attempt >= maxAttempts) {
             return FailureType.EXHAUSTED;
         }
