@@ -1,6 +1,6 @@
 # Spec 002: Immediate Kafka job processing with slower retries
 
-Status: **Draft — simplified architecture agreed; L01 validation implemented for review, worker runtime pending**
+Status: **Draft — simplified architecture agreed; L01 validation and L02 completion/offset library implemented, worker runtime pending**
 
 Project: `agentic-job-scheduler`
 Date: 2026-10-08
@@ -308,8 +308,10 @@ integration tests require Docker and must fail clearly if unavailable.
 
 Unit tests cover validation, queue exclusion, completion frontiers, limiter windows,
 retry rate/attempt calculations, and envelope bounds. Integration tests establish
-Kafka handoff and replay behavior. L01 has unit validation tests; Kafka handoff,
-DLQ publication, partition routing, and worker-runtime tests remain pending.
+Kafka handoff and replay behavior. L01 has unit validation tests; L02 has bounded
+completion/commit state-machine tests and simulated crash/replay tests. Kafka
+handoff, actual commits, DLQ publication, partition routing, and worker-runtime
+tests remain pending.
 
 ## 12. GH-600 learning workflow
 
@@ -350,7 +352,9 @@ task records, and transient exploration out of durable guidance. Revalidate
 handoffs against the current commit. Preserve failed experiments and their
 corrections as evidence; never invent a successful run to fill a learning row.
 
-Current learning status: architecture/specification artifacts and L01's Maven
-foundation and unit validation exist. Worker runtime, integration evaluations,
+Current learning status: architecture/specification artifacts, L01's Maven
+foundation/validation, and L02's completion/offset library and unit tests exist.
+L02 includes a tool inventory; learner review is pending. Worker runtime, integration evaluations,
 MCP configuration verification, multi-agent exercises, and GitHub enforcement
-controls have not yet been demonstrated. See the [L01 task record](../docs/tasks/L01-envelope-validation.md).
+controls have not yet been demonstrated. See the [L01 task record](../docs/tasks/L01-envelope-validation.md)
+and [L02 task record](../docs/tasks/L02-completion-offsets.md).
