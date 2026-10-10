@@ -22,6 +22,19 @@ Unit results are in `target/surefire-reports/`. Packaging produces
 main class. `mvn verify` currently runs the same unit/package lifecycle; no Kafka
 integration tests exist yet. Do not interpret a successful verify as Kafka proof.
 
+## GitHub Actions
+
+[The Maven CI workflow](.github/workflows/maven.yml) runs on pull requests targeting
+`main` and pushes to `main`, using Temurin Java 21 and cached Maven dependencies.
+`mvn -B -ntp package` runs the unit tests and builds the library JAR. Each run saves
+`test-reports` (including on test failure) and, on success, `library-jar` artifacts
+for 14 days. See the [CI task record](docs/tasks/CI01-maven-actions.md) for run evidence.
+
+The workflow has read-only repository permissions, pinned action revisions, and
+no deployment step. Required-check branch rules are separate and have not been
+configured by this task. CI currently provides unit/package evidence only; Kafka
+integration tests and security scanning remain pending.
+
 ## Validation API
 
 `com.example.agenticjobscheduler.messaging.EnvelopeValidator` takes a set of
