@@ -5,11 +5,12 @@ architecture authority. This guide explains the components implemented so far
 and how they fit into the Kafka worker design.
 
 **Implemented:** envelope validation, completion/offset tracking, a Vert.x
-immediate dispatcher, failure classification, and a deterministic adaptive
-limiter policy. **Planned:** executable worker verticles, Kafka consumers and
-publishers, retry/DLQ producer wiring, rebalance handling, and full
-backpressure. There is no PostgreSQL, Flyway, REST API, delayed-job timer,
-scheduling state topic, or RocksDB index in this architecture.
+immediate dispatcher with a library-side ownership-revocation hook, failure
+classification, and a deterministic adaptive limiter policy. **Planned:**
+executable worker verticles, Kafka consumers and publishers, retry/DLQ producer
+wiring, broker-integrated rebalance handling, and full backpressure. There is no
+PostgreSQL, Flyway, REST API, delayed-job timer, scheduling state topic, or
+RocksDB index in this architecture.
 
 ## 1. What each increment adds
 
@@ -19,6 +20,7 @@ scheduling state topic, or RocksDB index in this architecture.
 | L02 | `OffsetCommitTracker` | Propose commits only for completed delivered prefixes | 17 |
 | L03 | `ImmediateJobDispatcher` | Start eligible queue heads; serialize each jobId within its topic | 14 |
 | L04 | `FailureClassifier` + `AdaptiveLimiter` | Classify retryable vs exhausted/permanent failures and enforce the main-worker backpressure policy | focused unit coverage |
+| L05 | `ImmediateJobDispatcher.revokeOwnership()` | Stop admission/dispatch and ignore stale local callbacks for a revoked owner | 3 |
 
 These are executed cases, including parameterized inputs, not separate test
 methods per increment. L03 tests run real Vert.x event loops with controlled
@@ -257,7 +259,36 @@ main. Matching partition numbers across topics do not create a shared lock. L04
 models the retry/DLQ decision boundary in code, while full producer wiring,
 acknowledgment handling, and retry-rate integration remain future runtime work.
 
-## 8. Guarantees, gaps, and the next increments
+## 8. L05: invalidate a revoked owner
+
+`revokeOwnership()` is a context-confined library lifecycle hook for the
+dispatcher’s fixed assignment. It stops admission and dispatch; late handler
+completions, handoff acknowledgments, and commit results from that dispatcher do
+not advance its local completion or offset state. The caller must discard the
+old dispatcher and build a fresh dispatcher/tracker for reassigned partitions.
+
+```text
+Old owner: A RUNNING, B QUEUED
+                 |
+           revokeOwnership()
+                 v
+       no more admission/dispatch
+       late local callbacks ignored
+                 |
+                 v
+New owner: fresh tracker + dispatcher
+                 |
+          broker may replay A
+                 v
+       handler may run again
+```
+
+Revocation does not cancel in-flight handler work or fence external effects.
+Replay can therefore duplicate effects, and a callback ignored locally does not
+prove a previously sent broker commit was rejected. The tests exercise this
+library boundary, not Kafka consumer-group callbacks or a live rebalance.
+
+## 9. Guarantees, gaps, and the next increments
 
 Per-job exclusion applies within a stable topic owner. It does not guarantee
 cross-topic exclusion or prevent an old external operation continuing after
@@ -274,7 +305,7 @@ and tracker will be rebuilt from replay.
 | --- | --- |
 | Failure classification and adaptive limiter policy | L04, library-scoped and validated in unit tests |
 | Retry/DLQ publication wiring and runtime rate limits | future worker publisher/consumer integration |
-| Ownership invalidation, replay/rebalance and cancellation/drain | L05 |
+| Kafka consumer rebalance wiring, handler cancellation/drain, and broker-side commit fencing | Future worker-runtime integration |
 | Full byte/fetch backpressure, broker recovery and Compose evidence | L06 |
 | Real Kafka consumer/producer/commit integration | Runtime work; not established by these unit-level tests |
 | Fresh-session learning exercise | L03 handoff prepared; actual resumption still pending |

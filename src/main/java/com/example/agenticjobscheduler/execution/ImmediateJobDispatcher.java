@@ -41,7 +41,11 @@ public final class ImmediateJobDispatcher {
 
         public JobExecution execution() { return execution; }
 
-        /** Completes on the owner context after state changes and dispatch are applied. */
+        /**
+         * Completes on the owner context after state changes and dispatch are applied.
+         * If ownership is revoked first, the stale handler callback is ignored and
+         * this future may remain incomplete; discard this submission with its owner.
+         */
         public Future<HandlerResult> handlerStopped() { return stopped.future(); }
     }
 
@@ -56,6 +60,7 @@ public final class ImmediateJobDispatcher {
     private int partitionCursor;
     private int activeHandlers;
     private boolean dispatching;
+    private boolean ownershipRevoked;
 
     public ImmediateJobDispatcher(Context context, String topic, Set<Integer> assignment,
                                   int capacity, int maxRetainedRecords, JobHandler handler) {
@@ -78,6 +83,9 @@ public final class ImmediateJobDispatcher {
     /** Register fetched records in increasing offset order per partition; never drop rejected input. */
     public Submission submit(JobExecution execution) {
         requireContext();
+        if (ownershipRevoked) {
+            throw new IllegalStateException("Dispatcher ownership has been revoked");
+        }
         Objects.requireNonNull(execution, "execution");
         if (!topic.equals(execution.source().topic())) {
             throw new IllegalArgumentException("Wrong topic for dispatcher");
@@ -92,9 +100,26 @@ public final class ImmediateJobDispatcher {
         return submission;
     }
 
+    /**
+     * Invalidates this fixed-assignment owner. Does not cancel already-started
+     * handlers; discard this dispatcher and create a fresh one for new ownership.
+     */
+    public void revokeOwnership() {
+        requireContext();
+        if (ownershipRevoked) return;
+        ownershipRevoked = true;
+        runnable.values().forEach(ArrayDeque::clear);
+    }
+
+    public boolean isOwnershipRevoked() {
+        requireContext();
+        return ownershipRevoked;
+    }
+
     /** Only the publisher's actual retry/DLQ acknowledgment may release a failed job's gate. */
     public void handoffAcknowledged(Submission submission, OffsetCommitTracker.Completion outcome) {
         requireSubmission(submission);
+        if (ownershipRevoked) return;
         if (outcome != OffsetCommitTracker.Completion.RETRY_ACKNOWLEDGED
                 && outcome != OffsetCommitTracker.Completion.DLQ_ACKNOWLEDGED) {
             throw new IllegalArgumentException("Expected retry or DLQ acknowledgment");
@@ -111,6 +136,7 @@ public final class ImmediateJobDispatcher {
         return submission.state;
     }
 
+    /** Active-handler accounting is frozen when ownership is revoked. */
     public int activeHandlers() {
         requireContext();
         return activeHandlers;
@@ -123,21 +149,24 @@ public final class ImmediateJobDispatcher {
 
     public Optional<OffsetCommitTracker.CommitBatch> beginCommit() {
         requireContext();
+        if (ownershipRevoked) return Optional.empty();
         return tracker.beginCommit();
     }
 
     public void commitSucceeded(OffsetCommitTracker.CommitBatch batch) {
         requireContext();
+        if (ownershipRevoked) return;
         tracker.commitSucceeded(batch);
     }
 
     public void commitFailed(OffsetCommitTracker.CommitBatch batch) {
         requireContext();
+        if (ownershipRevoked) return;
         tracker.commitFailed(batch);
     }
 
     private void dispatch() {
-        if (dispatching) return;
+        if (dispatching || ownershipRevoked) return;
         dispatching = true;
         try {
             while (activeHandlers < capacity) {
@@ -176,7 +205,7 @@ public final class ImmediateJobDispatcher {
 
     private void stopped(Submission submission, boolean succeeded) {
         requireContext();
-        if (submission.state != State.RUNNING) return;
+        if (ownershipRevoked || submission.state != State.RUNNING) return;
         activeHandlers--;
         if (succeeded) {
             complete(submission, OffsetCommitTracker.Completion.HANDLER_SUCCESS);
