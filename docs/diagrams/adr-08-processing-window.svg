@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="670" viewBox="0 0 1120 670" role="img" aria-labelledby="title description">
+<title id="title">ADR 8: Bound retained work and apply hysteresis</title>
+<desc id="description">Intended process-wide window policy · every assigned partition follows the same intake signal</desc>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 Z" fill="#52647a"/></marker></defs>
+<style>text {font-family:Arial,Helvetica,sans-serif;fill:#182b43} .heading {font-size:25px;font-weight:700} .label {font-size:19px;font-weight:700} .detail {font-size:17px} .small {font-size:15px;fill:#42556c} .line {fill:none;stroke:#52647a;stroke-width:2;marker-end:url(#arrow)}</style>
+<rect width="1120" height="670" rx="16" fill="white"/>
+<text x="36" y="44" class="heading" text-anchor="start">ADR 8 · Bound retained work and apply hysteresis</text>
+<text x="36" y="75" class="detail" text-anchor="start">Intended process-wide window policy · every assigned partition follows the same intake signal</text>
+<rect x="36" y="122" width="1048" height="80" rx="12" fill="#f3f5f8" stroke="#bdcbd9"/>
+<text x="560.0" y="155.0" class="label" text-anchor="middle">Retained until source commit acknowledgment</text>
+<text x="560.0" y="182.0" class="detail" text-anchor="middle">Fetched + queued + running + handoff-pending + completed-but-uncommitted</text>
+<rect x="65" y="280" width="340" height="120" rx="12" fill="#eff8f4" stroke="#bdcbd9"/>
+<text x="235.0" y="333.0" class="label" text-anchor="middle">INTAKE OPEN</text>
+<text x="235.0" y="360.0" class="detail" text-anchor="middle">Admit bounded fetch batches</text>
+<rect x="715" y="280" width="340" height="120" rx="12" fill="#fff4df" stroke="#bdcbd9"/>
+<text x="885.0" y="333.0" class="label" text-anchor="middle">INTAKE PAUSED</text>
+<text x="885.0" y="360.0" class="detail" text-anchor="middle">Keep processing and polling</text>
+<path d="M405 306 H713" class="line"/>
+<text x="560" y="252" class="small" text-anchor="middle">Count OR bytes reaches high watermark</text>
+<path d="M715 379 H407" class="line"/>
+<text x="560" y="438" class="small" text-anchor="middle">Count AND bytes below low watermarks</text>
+<rect x="65" y="475" width="480" height="90" rx="12" fill="#edf5ff" stroke="#bdcbd9"/>
+<text x="305.0" y="513.0" class="label" text-anchor="middle">Default high watermarks</text>
+<text x="305.0" y="540.0" class="detail" text-anchor="middle">998 records OR 14 MiB</text>
+<rect x="575" y="475" width="480" height="90" rx="12" fill="#eff8f4" stroke="#bdcbd9"/>
+<text x="815.0" y="513.0" class="label" text-anchor="middle">Default resume conditions</text>
+<text x="815.0" y="540.0" class="detail" text-anchor="middle">Fewer than 499 records AND less than 7 MiB</text>
+<rect x="36" y="580" width="1048" height="82" rx="12" fill="#f3f5f8" stroke="#bdcbd9"/>
+<text x="560" y="608" class="detail" text-anchor="middle">Hard bound: 1,000 records / 16 MiB; reserve headroom for one fetch of 2 records / 2 MiB.</text>
+<text x="560" y="634" class="detail" text-anchor="middle">Handler completion or handoff ACK alone does not release retained-window capacity.</text>
+</svg>
