@@ -39,16 +39,10 @@ class L04RetryAndLimiterTest {
     @Test
     void adaptiveLimiterIncreasesOnlyWithHealthyBacklog() {
         var limiter = new AdaptiveLimiter(1, 32, 8);
-        for (int i = 0; i < 19; i++) {
-            assertEquals(8, limiter.applyWindow(true, 200L, 0.00, false, false));
-        }
         assertEquals(9, limiter.applyWindow(true, 200L, 0.00, false, false));
         assertEquals(9, limiter.currentLimit());
 
         var capped = new AdaptiveLimiter(1, 8, 8);
-        for (int i = 0; i < 19; i++) {
-            assertEquals(8, capped.applyWindow(true, 200L, 0.00, false, false));
-        }
         assertEquals(8, capped.applyWindow(true, 200L, 0.00, false, false));
     }
 

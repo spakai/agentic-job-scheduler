@@ -5,11 +5,14 @@ supervision. [Spec 002](specs/002-kafka-job-scheduling.md) defines the intended
 worker service. **Currently implemented:** L01–L05 library components, the L06 bounded
 retained-work window and Vert.x pause/resume controller, plus an executable Kafka
 main/retry worker with acknowledged retry/DLQ handoffs and explicit commits.
-Broker evidence covers retry and failed-send recovery, bounded malformed/
-oversized/wrong-partition DLQ routing, and pause/poll/commit/resume. Compose
-evidence covers independent main/retry processes, scaling retry to two replicas,
-DLQ routing, and replay after Kafka broker restart. Remaining B14–B20 worker
-acceptance, including rebalance and unconfirmed cancellation, is still in progress.
+Broker evidence covers retry and failed-send recovery, retry-worker
+rate/concurrency limits and attempt progression, bounded malformed/
+oversized/wrong-partition DLQ routing, pause/poll/commit/resume, retry-worker
+rate/concurrency, main adaptive limits, worker pressure, and independent
+partition commits. Compose evidence covers separate main/retry processes,
+scaling retry to two replicas, DLQ routing, and replay after Kafka broker restart.
+Remaining B11 rebalance/stale callbacks, B18 sustained outage, and B19 cancellation
+acknowledgment are still in progress.
 
 See the [arc42 architecture documentation](arch.md) for topic ownership,
 per-job queues, safe commits, the runtime boundary, and ADRs 1–10.
@@ -191,12 +194,15 @@ docker compose up --scale retry-worker=2 -d
 ```
 
 `WORKER_ROLE` is `main` or `retry`; `KAFKA_BOOTSTRAP_SERVERS`,
-`WORKER_CONCURRENCY`, and `KAFKA_TOPIC_PARTITIONS` configure each process. Retry
-workers default to concurrency 2 and one handler start per second per pod. Main
-workers start at 16 permits and adapt between 1 and 128. `docker compose down`
-stops only this project; it preserves Kafka data. Do not use `docker compose down
--v` unless deleting the demo backlog is intended. The single-broker Compose
-deployment is for learning, not a production durability profile.
+`WORKER_CONCURRENCY`, `KAFKA_TOPIC_PARTITIONS`, and
+`WORKER_RETRY_STARTS_PER_SECOND` configure each process. Retry workers default
+to concurrency 2 and one handler start per second per pod; set
+`RETRY_WORKER_CONCURRENCY` and `RETRY_WORKER_STARTS_PER_SECOND` in Compose to
+adjust them. Main workers start at 16 permits and adapt between 1 and 128.
+`docker compose down` stops only this project; it preserves Kafka data. Do not
+use `docker compose down -v` unless deleting the demo backlog is intended. The
+single-broker Compose deployment is for learning, not a production durability
+profile.
 
 ## Retry wire example
 

@@ -6,6 +6,18 @@ Status: in progress
 
 - Requirement: implement the Spec 002 L06 backpressure/recovery increment,
   acceptance IDs B14–B20.
+- Ordered follow-up authorized on 2026-10-10: address the outstanding runtime
+  cases in this order: B07 retry concurrency/rate and attempt progression; B13
+  worker adaptive limits; B14 worker-under-pressure integration; B15
+  out-of-order and independent-partition commits; B19 unconfirmed cancellation;
+  B11 rebalance/stale callbacks; B18 sustained broker outage/recovery. Keep
+  each acceptance independently reviewable and record test evidence and any
+  remaining gap before starting the next.
+- Current slice plan — B11: trigger a real consumer-group rebalance while a
+  handler is active. Verify revocation stops queued dispatch and stale handler
+  completion cannot commit the revoked partition; confirm the new owner replays
+  from Kafka's committed offset. Account for the old worker's retained window
+  when closing the test fixture.
 - Base commit and branch: L06 B14 controller slice merged in PR #7 at
   `3b8cdc3`; runtime continuation branch `feat/l06-worker-runtime`.
 - Current continuation slice (2026-10-10): complete Spec 002 B14–B20 runtime
@@ -159,27 +171,84 @@ Status: in progress
   integrations were two `KafkaWorkerIT` cases, one `KafkaWorkerCrashIT` case,
   and one `ProcessingWindowKafkaIT` case. This verifies the code on the pushed
   snapshot but does not close L06: the worker-level B15/B19, B14 under-pressure
-  integration, sustained broker-outage B18, and worker-level B07/B11/B13 cases
+  integration, sustained broker-outage B18, and worker-level B11/B13 cases
   remain unverified. The run emitted expected `RecordTooLargeException`
   warnings from the injected failed-handoff test; that test passed after
   verifying the source offset stayed put and recovery succeeded.
+- 2026-10-10 (B07): the first worker-level retry test exposed that the retry
+  start rate was hard-coded to one start per second despite Spec 002 requiring
+  both retry concurrency and rate to be configurable. Added
+  `WORKER_RETRY_STARTS_PER_SECOND` (default 1), wired it through Compose, and
+  added a broker-backed controlled-handler test. With rate 4/s and concurrency
+  2, it verifies spacing between handler starts, no third active handler while
+  both slots are held, a retryable attempt-2 failure publishing attempt 3, and
+  successful consumption/commit of that next attempt. `WorkerConfigTest` checks
+  the default, override, and invalid zero rate. Focused command
+  `mvn -B -ntp -Dtest=WorkerConfigTest -Dit.test=KafkaWorkerIT verify` passed:
+  two unit tests and three Kafka worker integration tests, no failures/errors/
+  skips. B07 is now covered at worker level; B13 remains a separate open case.
+- 2026-10-11 (B13): a focused unit assertion exposed a limiter defect: healthy
+  increases were delayed until 20 qualifying windows rather than one window
+  with at least 20 completed attempts. Removed the cumulative-window gate while
+  preserving the per-window sample threshold. Added a broker-backed main-worker
+  test proving the limit rises from 4 to 5 under healthy backlog and later
+  reduces to 2 after a slow window with sufficient completions. The focused
+  limiter unit test passed (5 tests); the full `KafkaWorkerIT` class plus
+  `WorkerConfigTest` and limiter tests passed (4 integration, 7 unit tests; no
+  failures/errors/skips). The first integration attempt did not allow a full
+  slow sampling interval before checking the reduced limit; the test was
+  adjusted to observe through two intervals and passed. Evidence is recorded
+  for the working tree based on `94f5550`; B14 worker-pressure testing is next.
+- 2026-10-11 (B14): added package-private processing-window injection so the
+  worker integration can use a small hard bound without changing production
+  defaults. The broker test held the first same-job handler, observed the
+  worker pause at its count watermark with no committed source offset and no
+  further retained batch, then released it and verified all 20 records
+  completed, committed, and released the window. Combined with
+  `ProcessingWindowKafkaIT`, which confirms polling continues while the real
+  Vert.x partition is paused and resumes after commit acknowledgment, this
+  covers the worker pressure interaction. Focused combined run passed: 10 unit
+  tests and 6 Testcontainers integration tests, 0 failures/errors/skips. B15 is
+  now next.
+- 2026-10-11 (B15): added a worker-level test with offset 0 held on one
+  partition, offset 1 completed behind it, and offset 0 completed on a second
+  partition. The second partition committed to 1 while the first stayed at
+  `-1`; after releasing offset 0, the first partition committed to 2. Combined
+  validation passed: 29 selected unit tests, including offset-gap tracker
+  cases, and 7 Testcontainers integration tests, 0 failures/errors/skips. B19
+  unconfirmed cancellation is next.
+- 2026-10-11 (B19 partial): a worker shutdown test confirms an unresolved
+  handler keeps its same-job successor gated, leaves the source offset
+  uncommitted, and keeps shutdown pending. Confirming the handler allows both
+  records to complete and commit. The focused check passed (2 unit tests and 1
+  Testcontainers worker integration); a clean full verify then passed 125 unit
+  tests and 9 integrations with no failures/errors/skips. This does not test a
+  timeout cancellation acknowledgment: `JobHandler` has no cancellation API,
+  and the worker currently waits until its 30-second close timeout before
+  closing clients with unfinished records. B11 rebalance/stale-callback testing
+  is next; B19 remains partially open pending the cancellation contract.
 
 ## Evaluation
 
 | Check | Commit | Command or workflow | Result | Evidence |
 | --- | --- | --- | --- | --- |
+| Unconfirmed handler during worker shutdown (partial B19) | `6ad2d2e` | `mvn -B -ntp -Dtest=WorkerConfigTest -Dit.test=KafkaWorkerIT#workerShutdownWaitsForUnconfirmedHandlerBeforeCommittingSource verify` | passed: 2 unit tests and 1 Testcontainers worker integration; no early commit; cancellation API remains unimplemented | [L06 validation evidence](evidence/L06-validation.txt) |
+| Out-of-order prefix and independent partition commits (B15) | `6ad2d2e` | `mvn -B -ntp -Dtest=WorkerConfigTest,L04RetryAndLimiterTest,OffsetCommitTrackerTest,ProcessingWindowTest -Dit.test=KafkaWorkerIT,ProcessingWindowKafkaIT verify` | passed: 29 unit tests and 7 Testcontainers integration tests; 0 failures/errors/skips | [L06 validation evidence](evidence/L06-validation.txt) |
+| Worker bounded-window pressure and pause/resume (B14) | `6ad2d2e` | `mvn -B -ntp -Dtest=ProcessingWindowTest,L04RetryAndLimiterTest -Dit.test=KafkaWorkerIT,ProcessingWindowKafkaIT verify` | passed: 10 unit tests and 6 Testcontainers integration tests; 0 failures/errors/skips | [L06 validation evidence](evidence/L06-validation.txt) |
+| Main adaptive limit (B13) | `6ad2d2e` | `mvn -B -ntp -Dtest=WorkerConfigTest,L04RetryAndLimiterTest -Dit.test=KafkaWorkerIT verify` | passed: 7 unit tests and 4 Testcontainers Kafka worker integration tests; 0 failures/errors/skips | [L06 validation evidence](evidence/L06-validation.txt) |
+| Retry rate/concurrency and attempt progression (B07) | working tree | `mvn -B -ntp -Dtest=WorkerConfigTest -Dit.test=KafkaWorkerIT verify` | passed: 2 unit tests and 3 Testcontainers Kafka worker integration tests; 0 failures/errors/skips | current session output, 2026-10-10 |
 | Fresh health check of pushed feature snapshot | `7e9e7d0` | `mvn -B -ntp clean verify` | passed: 123 unit tests and 4 Testcontainers integration tests; 0 failures/errors/skips; JAR built | current session output; [L06 validation evidence](evidence/L06-validation.txt) |
 | Merged L05 baseline | `8476630` | `mvn -B -ntp clean test` | passed: 115 tests, 0 failures/errors/skips | session output; retain final L06 evidence |
 | Processing-window component (partial B14) | working tree | `mvn -B -ntp -Dtest=ProcessingWindowTest test` | passed: 5 tests, 0 failures/errors/skips | [L06 validation evidence](evidence/L06-validation.txt) |
 | Vert.x Kafka pause/poll/commit/resume (partial B14) | working tree | `mvn -B -ntp -Dit.test=ProcessingWindowKafkaIT verify` | passed: 120 unit tests and 1 Testcontainers Vert.x Kafka integration test, 0 failures/errors/skips | [L06 validation evidence](evidence/L06-validation.txt) |
 | Maven dependency CVE scan and patched rescan | working tree | `appmod-cve-assessment` against the resolved Maven test graph | final rescan clean; initial and intermediate findings fixed | session artifact `files/l06-cve/` |
-| Safe-prefix and handoff boundaries (B15/B16 library/component coverage) | merged baseline + L06 tree | `mvn -B -ntp clean verify` | passed in unit suite; worker-level out-of-order/independent-partition acceptance not yet covered | [L06 validation evidence](evidence/L06-validation.txt) |
+| Safe-prefix and handoff boundaries (B15/B16) | L06 working tree | `mvn -B -ntp clean verify` | passed in tracker unit tests and worker-level B15 integration; B16 handoff acknowledgment remains covered by KafkaWorkerIT | [L06 validation evidence](evidence/L06-validation.txt) |
 | Worker retry/DLQ handoff, bounded invalid-record DLQ, failed retry-send retention/recovery (B06/B16/B17) | L06 working tree | `mvn -B -ntp clean -Dit.test=KafkaWorkerIT verify` | passed: 123 unit tests and 1 Testcontainers worker integration test; rejected sends logged and recovered, no repeated handler invocation | [L06 validation evidence](evidence/L06-validation.txt) |
 | Compose roles, two retry replicas, bounded DLQ, persistent broker restart and queued main replay (partial B18/B20) | L06 working tree | `docker compose -p l06-worker-runtime up --build --scale retry-worker=2 --detach`; publish/scale/restart/inspect commands recorded in evidence | passed manually; services remain running with named volume preserved | [L06 validation evidence](evidence/L06-validation.txt) |
 | Full B14–B20 runtime acceptance | L06 working tree | `mvn -B -ntp clean verify` plus manual Compose checks | partial: see gaps below; not complete | [L06 validation evidence](evidence/L06-validation.txt) |
-| Full clean build, unit suite, Kafka integration, and package | L06 working tree | `mvn -B -ntp clean verify` | passed: 123 unit tests and 2 Testcontainers integration tests; JAR built | [L06 validation evidence](evidence/L06-validation.txt) |
-| Whitespace | L06 working tree | `git diff --check` | to rerun after documentation updates | [L06 validation evidence](evidence/L06-validation.txt) |
-| Editor diagnostics | L06 working tree | Problems panel for `ProcessingWindow` and its test | no errors | [L06 validation evidence](evidence/L06-validation.txt) |
+| Full clean build, unit suite, Kafka integration, and package | `6ad2d2e` | `mvn -B -ntp clean verify` | passed: 125 unit tests and 9 Testcontainers integration tests; JAR built | [L06 validation evidence](evidence/L06-validation.txt) |
+| Whitespace | L06 working tree | `git diff --check` | passed after source, test, and documentation updates | [L06 validation evidence](evidence/L06-validation.txt) |
+| Editor diagnostics | L06 working tree | VS Code diagnostics for the touched Java source and test files | no errors | current session output |
 | Docker/Testcontainers broker | working tree | `mvn -B -ntp verify` | passed; L06 Kafka container started and cleaned up; pre-existing `spec007-worker` containers untouched | [L06 validation evidence](evidence/L06-validation.txt) |
 | CI/security/restricted-agent exercises | n/a | workflows/scans not yet selected | not run | no claim |
 
@@ -187,9 +256,13 @@ Negative window tests reject fetch-bound violations, prevent new reservations
 while paused, prevent foreign/double release, and verify that a failed commit
 retains the window reservation. The worker integration now covers failed retry
 publication and recovery. Still unverified are rebalance ownership/stale callback
-behavior in the worker, B15 with out-of-order completion across independent Kafka
-partitions, controlled runtime limiter/rate behavior (B07/B13), confirmed/unconfirmed worker
-cancellation (B19). B09/B20 replay after SIGKILL of a real worker JVM is covered
+behavior in the worker and timeout cancellation acknowledgment (B19). B19's
+shutdown wait and no-premature-commit boundary is covered, but the handler API
+cannot confirm cancellation. B15 out-of-order prefix and independent-partition
+commits are covered at worker level; B13 adaptive-limit behavior is covered by
+controlled healthy and slow windows; B14 pressure behavior is covered by the
+worker test together with the pause-while-polling controller test. B09/B20 replay
+after SIGKILL of a real worker JVM is covered
 by `KafkaWorkerCrashIT`. Defect found and fixed: completions arriving while a
 commit was in flight were not re-batched after commit success, leaving offsets
 under-committed (surfaced as intermittent `KafkaWorkerIT` failures, ~1 in 3).
@@ -225,26 +298,32 @@ during a sustained broker outage.
 
 ## Handoff and review
 
-- Latest verified commit: `7e9e7d0` on `feat/l06-worker-runtime`; the feature
-  snapshot is pushed to `origin/feat/l06-worker-runtime`. Its committed tree
-  matches the original feature snapshot. The original local history, which
+- Latest code/test commit: `6ad2d2e` on `feat/l06-worker-runtime`, pushed to
+  `origin/feat/l06-worker-runtime`. The branch has an open
+  [PR #9](https://github.com/spakai/agentic-job-scheduler/pull/9) targeting
+  `main`; its Java 21 test/package CI check passed. The original local history, which
   contained missing Git objects and could not be pushed, is preserved locally
-  as `backup/feat-l06-worker-runtime-corrupt-history`. The current health-check
-  documentation changes are pending commit. Unrelated untracked
+  as `backup/feat-l06-worker-runtime-corrupt-history`. The L06 implementation,
+  tests, and acceptance evidence are committed. This handoff update is pending
+  its follow-up documentation commit. Unrelated untracked
   `.vscode/settings.json` remains untouched.
 - Completed steps: implemented executable main/retry workers and Compose demo;
-  fresh `mvn -B -ntp clean verify` passed on `7e9e7d0` with 123 unit tests and
-  four Testcontainers integration tests; prior evidence records broker
+  B07 retry controls and B13–B15 worker behavior are covered by focused broker
+  tests; B19 has partial shutdown/no-premature-commit evidence. A fresh
+  `mvn -B -ntp clean verify` passed on the current working tree with 125 unit
+  tests and 9 Testcontainers integrations; prior evidence records broker
   retry/DLQ, crash/replay, failed-send recovery, and Compose scaling/DLQ/
   persistent broker restart.
-- Next concrete step: address the remaining B14–B20 gaps listed above, update
+- Next concrete step: add worker-level B11 rebalance/stale-callback evidence,
+  then address the remaining B19 cancellation-contract and B18 outage gaps, updating
   evidence after each actual check, and only close L06 when the acceptance table
   is adequately covered.
 - Open risks/decisions and owner: worker-level rebalance/commit-frontier and
   cancellation semantics remain unverified. No exactly-once, global ordering,
   durable deduplication, or external-effect fencing claim is made.
 - Reviewer findings and disposition: pending.
-- PR / final outcome: L06 remains in progress; no commit or PR created.
+- PR / final outcome: L06 remains in progress; PR #9 is open, with B11, B18,
+  and the B19 cancellation contract still outstanding.
 
 ## Learning check
 
