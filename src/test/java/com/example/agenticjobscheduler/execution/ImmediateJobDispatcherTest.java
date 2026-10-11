@@ -48,6 +48,21 @@ class ImmediateJobDispatcherTest {
     }
 
     @Test
+    void cancellationRequestDoesNotImplyHandlerHasStopped() {
+        var execution = job(MAIN, 0, 10, A, 101);
+        var operation = Promise.<Void>promise();
+        var cancellationRequested = execution.cancellation().cancellationRequested();
+
+        assertFalse(cancellationRequested.isComplete());
+        assertFalse(execution.cancellation().isCancellationRequested());
+        assertTrue(execution.cancellation().requestCancellation());
+        assertTrue(cancellationRequested.isComplete());
+        assertTrue(execution.cancellation().isCancellationRequested());
+        assertFalse(operation.future().isComplete());
+        assertFalse(execution.cancellation().requestCancellation());
+    }
+
+    @Test
     void startsImmediatelyWithoutTimersAndDoesNotBlockEventLoop() throws Exception {
         var handler = new ControlledHandler();
         var dispatcher = create(MAIN, 1, 10, handler);

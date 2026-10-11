@@ -5,6 +5,9 @@ import io.vertx.core.Future;
 /**
  * Nonblocking, replay-safe and concurrency-safe handler. The future, whether
  * successful or failed, must finish only after the operation has actually stopped.
+ * A cancellation request is available through {@link JobExecution#cancellation()};
+ * it does not stop the operation by itself. Future completion acknowledges that
+ * the operation and its side effects have stopped.
  * A synchronous throw is allowed only before starting work. Never return null.
  * Offload blocking work to a bounded executor; do not block the owner event loop.
  * Main/retry overlap and replay are possible: use the execution's jobId and

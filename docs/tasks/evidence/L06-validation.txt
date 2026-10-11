@@ -1,6 +1,35 @@
 L06 backpressure/recovery evidence — 2026-10-10
 
-B19 partial shutdown boundary — 2026-10-11
+B19 handler timeout and cancellation confirmation — 2026-10-11
+Branch: feat/l06-handler-cancellation; based on PR #10 merge a09a26e.
+Confirmed command: `mvn -B -ntp -Dtest=ImmediateJobDispatcherTest -Dit.test=KafkaWorkerIT#timedOutHandlerRetriesAndReleasesGateOnlyAfterStopConfirmation verify`
+Unconfirmed command: `mvn -B -ntp -Dtest=ImmediateJobDispatcherTest -Dit.test=KafkaWorkerIT#unconfirmedHandlerCancellationKeepsGateAndOffsetIncomplete verify`
+Result: both passed; each ran 20 dispatcher unit tests and 1 Testcontainers
+KafkaWorkerIT case with 0 failures/errors/skips.
+Contract: timeout sends a cooperative cancellation request through
+`JobExecution.cancellation()`. The request itself does not release the handler
+permit or job gate. Completion of the handler's returned future acknowledges
+that work has actually stopped; only then does the timeout become a retryable
+`HANDLER_TIMEOUT` and follow normal acknowledged handoff/commit behavior.
+Confirmed case: while the future was unresolved, the source offset remained
+unset and the same-job successor did not start. Settling the future caused
+attempt 2 to be published and acknowledged, then released the gate and source
+prefix. Unconfirmed case: after cancellation request and reporting grace, the
+future remained pending, the successor stayed gated, and the source offset
+remained unset; the worker logged the stuck condition. The production timeout
+is 30 seconds; shorter values are available only through a package-private test
+constructor.
+
+B19 full clean verification — 2026-10-11
+Command: `mvn -B -ntp clean verify`
+Result: passed from a clean target directory; 126 unit tests and 13
+Testcontainers integrations (KafkaWorkerIT: 11, KafkaWorkerCrashIT: 1,
+ProcessingWindowKafkaIT: 1), 0 failures/errors/skips; JAR built.
+Expected warnings include the deliberate unconfirmed-cancellation stuck report
+and the failed-handoff `RecordTooLargeException` injection; all related tests
+passed. This run validates the current B19 implementation and test tree.
+
+Earlier B19 shutdown boundary — 2026-10-11 (superseded by timeout tests above)
 Branch: feat/l06-worker-runtime; implementation committed as 6ad2d2e.
 Command: `mvn -B -ntp -Dtest=WorkerConfigTest -Dit.test=KafkaWorkerIT#workerShutdownWaitsForUnconfirmedHandlerBeforeCommittingSource verify`
 Result: passed; 2 unit tests and 1 Testcontainers KafkaWorkerIT case,
@@ -9,11 +38,9 @@ Coverage: while the first same-job handler future was unresolved, calling
 `KafkaWorker.close()` left shutdown pending, did not start the queued second
 record, and left the source group offset unset. After the handler future was
 confirmed, the second record ran and the source committed through offset 2.
-Gap: this proves no completion is manufactured while work is unconfirmed, but
-does not exercise a handler cancellation acknowledgment. `JobHandler` has no
-cancellation API; the worker's forced close path occurs after its 30-second
-shutdown timer and closes clients without committing the unfinished record.
-B19 remains partially open pending a cancellation contract/test.
+At that point this was partial B19 evidence because `JobHandler` had no
+cancellation API. The confirmed/unconfirmed timeout tests above supersede that
+gap with an explicit cancellation request and handler-future stop acknowledgment.
 
 Full clean L06 verification — 2026-10-11
 Command: `mvn -B -ntp clean verify`

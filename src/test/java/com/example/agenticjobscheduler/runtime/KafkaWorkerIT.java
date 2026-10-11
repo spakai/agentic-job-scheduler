@@ -656,6 +656,111 @@ class KafkaWorkerIT {
         }
     }
 
+    /** B19: timeout retry waits until the handler future confirms that cancellation stopped work. */
+    @Test
+    void timedOutHandlerRetriesAndReleasesGateOnlyAfterStopConfirmation() throws Exception {
+        String bootstrap = KAFKA.getBootstrapServers();
+        TopicProvisioner.ensureTopics(bootstrap, 3);
+
+        UUID jobId = UUID.randomUUID();
+        byte[] key = JobRecordEncoder.key(jobId);
+        byte[] value = JobRecordEncoder.main(job(jobId, 3));
+        int partition = partition(key, 3);
+        AtomicInteger handlerStarts = new AtomicInteger();
+        Promise<Void> cancellationRequested = Promise.promise();
+        Promise<Void> firstHandler = Promise.promise();
+        Vertx vertx = Vertx.vertx();
+        KafkaWorker main = new KafkaWorker(vertx,
+                new WorkerConfig(bootstrap, WorkerRole.MAIN, 2, 3),
+                execution -> {
+                    if (execution.source().offset() == 0) {
+                        handlerStarts.incrementAndGet();
+                        execution.cancellation().cancellationRequested()
+                                .onSuccess(ignored -> cancellationRequested.tryComplete());
+                        return firstHandler.future();
+                    }
+                    handlerStarts.incrementAndGet();
+                    return Future.succeededFuture();
+                }, new ProcessingWindow(), 2_000, 100, 250);
+        try {
+            main.start().toCompletionStage().toCompletableFuture().get(30, TimeUnit.SECONDS);
+            try (KafkaProducer<byte[], byte[]> producer =
+                         new KafkaProducer<>(producerProperties(bootstrap))) {
+                for (int index = 0; index < 2; index++) {
+                    producer.send(new ProducerRecord<>(TopicProvisioner.MAIN_TOPIC,
+                            partition, key, value)).get(10, TimeUnit.SECONDS);
+                }
+            }
+
+            cancellationRequested.future().toCompletionStage().toCompletableFuture()
+                    .get(10, TimeUnit.SECONDS);
+            assertEquals(1, handlerStarts.get(),
+                    "the same-job successor must stay gated until cancellation is confirmed");
+            assertEquals(-1, committedOffset(bootstrap, WorkerRole.MAIN.groupId(),
+                            new TopicPartition(TopicProvisioner.MAIN_TOPIC, partition)),
+                    "the source remains incomplete while the handler future is unresolved");
+
+            firstHandler.tryComplete();
+            List<JsonNode> retries = readJsonRecords(bootstrap, TopicProvisioner.RETRY_TOPIC, 1);
+            assertEquals(2, retries.getFirst().path("attempt").asInt());
+            assertEquals("HANDLER_TIMEOUT", retries.getFirst().path("errorCode").asText());
+            awaitAtLeast(handlerStarts, 2, 10);
+            awaitCommittedAtLeast(bootstrap, WorkerRole.MAIN.groupId(),
+                    new TopicPartition(TopicProvisioner.MAIN_TOPIC, partition), 2);
+            assertEquals(2, handlerStarts.get());
+        } finally {
+            firstHandler.tryComplete();
+            main.close().toCompletionStage().toCompletableFuture().get(10, TimeUnit.SECONDS);
+            vertx.close().toCompletionStage().toCompletableFuture().get(10, TimeUnit.SECONDS);
+        }
+    }
+
+    /** B19 negative case: no cancellation acknowledgment keeps the gate and source offset incomplete. */
+    @Test
+    void unconfirmedHandlerCancellationKeepsGateAndOffsetIncomplete() throws Exception {
+        String bootstrap = KAFKA.getBootstrapServers();
+        TopicProvisioner.ensureTopics(bootstrap, 3);
+
+        UUID jobId = UUID.randomUUID();
+        byte[] key = JobRecordEncoder.key(jobId);
+        byte[] value = JobRecordEncoder.main(job(jobId, 3));
+        int partition = partition(key, 3);
+        AtomicInteger handlerStarts = new AtomicInteger();
+        Promise<Void> cancellationRequested = Promise.promise();
+        Promise<Void> neverStops = Promise.promise();
+        Vertx vertx = Vertx.vertx();
+        KafkaWorker main = new KafkaWorker(vertx,
+                new WorkerConfig(bootstrap, WorkerRole.MAIN, 2, 3),
+                execution -> {
+                    handlerStarts.incrementAndGet();
+                    execution.cancellation().cancellationRequested()
+                            .onSuccess(ignored -> cancellationRequested.tryComplete());
+                    return neverStops.future();
+                }, new ProcessingWindow(), 500, 100, 100);
+        try {
+            main.start().toCompletionStage().toCompletableFuture().get(30, TimeUnit.SECONDS);
+            try (KafkaProducer<byte[], byte[]> producer =
+                         new KafkaProducer<>(producerProperties(bootstrap))) {
+                for (int index = 0; index < 2; index++) {
+                    producer.send(new ProducerRecord<>(TopicProvisioner.MAIN_TOPIC,
+                            partition, key, value)).get(10, TimeUnit.SECONDS);
+                }
+            }
+
+            cancellationRequested.future().toCompletionStage().toCompletableFuture()
+                    .get(10, TimeUnit.SECONDS);
+            Thread.sleep(500);
+            assertEquals(1, handlerStarts.get(),
+                    "an unconfirmed cancellation must retain the same-job gate");
+            assertEquals(-1, committedOffset(bootstrap, WorkerRole.MAIN.groupId(),
+                            new TopicPartition(TopicProvisioner.MAIN_TOPIC, partition)),
+                    "an unconfirmed cancellation must not complete the source record");
+        } finally {
+            main.close().toCompletionStage().toCompletableFuture().get(10, TimeUnit.SECONDS);
+            vertx.close().toCompletionStage().toCompletableFuture().get(10, TimeUnit.SECONDS);
+        }
+    }
+
     /** B11: a revoked owner's late handler callback cannot dispatch or commit stale work. */
     @Test
     void workerRebalanceIgnoresStaleHandlerAndReplaysOnNewOwner() throws Exception {

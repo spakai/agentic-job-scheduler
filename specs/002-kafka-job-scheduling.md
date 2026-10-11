@@ -1,6 +1,6 @@
 # Spec 002: Immediate Kafka job processing with slower retries
 
-Status: **Draft — Kafka main/retry worker runtime and Compose demo implemented; B06/B07/B08/B09/B11/B13/B14/B15/B16/B17/B18/B20 have test or demo evidence; B19 and GH-600 review evidence remain in progress**
+Status: **Draft — Kafka main/retry worker runtime and Compose demo implemented; B06/B07/B08/B09/B11/B13/B14/B15/B16/B17/B18/B19/B20 have test or demo evidence; GH-600 review evidence remains in progress**
 
 Project: `agentic-job-scheduler`
 Date: 2026-10-08
@@ -251,10 +251,14 @@ the demo handler must be cancellable and have no irreversible external effects.
 Production integrations must supply appropriate target-side idempotency rather
 than rely on an in-memory cache as proof of safety.
 
-Default handler timeout is 30 seconds. Cancellation must be confirmed before
-releasing a local gate or retrying a timed-out handler. If cancellation cannot be
-confirmed, keep the gate, leave the record incomplete, and report the stuck task;
-do not manufacture completion. Forced pod loss can still cause replay elsewhere.
+Default handler timeout is 30 seconds. The worker signals cancellation through
+`JobExecution.cancellation()`; this request does not stop the operation. The
+handler's returned future settles only after execution and its side effects have
+actually stopped, and that settlement confirms cancellation. Only then may the
+worker hand off a timed-out attempt and release its local gate. If the future
+does not settle, keep the gate, leave the record incomplete, and report the stuck
+task; do not manufacture completion. Forced pod loss can still cause replay
+elsewhere.
 
 On broker/commit failure, retain bounded results and pause intake as necessary.
 Do not drop records to make space. Readiness requires valid configuration, known
@@ -317,14 +321,13 @@ unchanged without rerunning the handler before successful recovery. Compose
 evidence covers separate main/retry processes, two retry replicas, DLQ routing,
 persistent Kafka storage, and queued work after broker restart.
 
-Remaining worker acceptance is B19 cancellation acknowledgment. B11 revocation
-and stale handler behavior are covered by a real two-member consumer-group
-rebalance test. B18 recovery is covered by a three-second Testcontainers broker
-pause while a handler completion is pending, followed by commit and polling
-recovery; Compose separately covers broker restart and queued-work replay. B19 has partial
-shutdown evidence: unresolved handler work keeps the source offset incomplete
-until its future confirms completion, but `JobHandler` currently has no
-cancellation-acknowledgment API. B14 pressure and B15 safe-prefix/independent
+Remaining worker acceptance is GH-600 review evidence. B11 revocation and stale
+handler behavior are covered by a real two-member consumer-group rebalance test.
+B18 recovery is covered by a three-second Testcontainers broker pause while a
+handler completion is pending, followed by commit and polling recovery; Compose
+separately covers broker restart and queued-work replay. B19 tests both confirmed
+timeout cancellation followed by retry handoff and unconfirmed cancellation
+retaining its gate and incomplete source record. B14 pressure and B15 safe-prefix/independent
 partition behavior are covered by worker tests; offset gaps are covered by
 tracker unit tests. B07 retry-rate/concurrency and B13 adaptive-limit behavior
 also have controlled worker-level tests. L03 component tests establish immediate
