@@ -374,6 +374,8 @@ pause/poll/commit/resume.
 
 ### 6.8 Runtime scenarios: 20,000 requests/day; thirteen main partitions; seven main pods
 
+> [**Visual atlas: view all 49 Mermaid runtime diagrams**](docs/runtime-scenario-visuals.md)
+
 **Scenario assumptions (illustrative deployment, not current Spec 002 defaults).**
 The main topic `jobs.main.v1` is pre-created with **13 fixed partitions** and receives
 **20,000 new requests/day**. That is **833.3/hour** or **0.2315/second** on a
@@ -411,50 +413,50 @@ busy hour is not proof that microbursts cannot exceed the capacity/window.
 
 | ID | Scenario | Expected behavior / observable assertion |
 | --- | --- | --- |
-| R-P01 | All 7 main pods start simultaneously on an empty group | Group stabilizes with all 7 consumers assigned partitions (six with two, one with one under balanced assignment); no records lost |
-| R-P02 | 1,317 new requests arrive evenly within a busy hour | Seven assigned pods consume their partitions; distinct jobIds run concurrently up to available permits; lag stays bounded if measured service capacity exceeds arrivals |
-| R-P03 | 20,000 jobs arrive across one day with quieter hours | Kafka buffers arrival variance; no need to spin up a thread per message; monitor queue age as well as lag |
-| R-P04 | Two successive messages with same jobId share a partition | Second waits behind first in that partition's per-job FIFO gate; unrelated IDs can overlap |
-| R-P05 | Different jobs finish out of offset order | `OffsetCommitTracker` commits only the complete contiguous prefix for each partition; later completed records remain retained |
-| R-P06 | Slow but healthy downstream reduces available permits | Adaptive limiter reduces admission/concurrency, window pauses partition intake, then resumes below low watermark; Kafka retains backlog |
-| R-P07 | An assigned pod terminates *after* its handler and offset commit complete | Surviving consumers rebalance and continue at committed next offsets; a replacement pod may take ownership |
+| [R-P01](docs/runtime-scenario-visuals.md#r-p01-all-7-main-pods-start-simultaneously-on-an-empty-group) | All 7 main pods start simultaneously on an empty group | Group stabilizes with all 7 consumers assigned partitions (six with two, one with one under balanced assignment); no records lost |
+| [R-P02](docs/runtime-scenario-visuals.md#r-p02-1317-new-requests-arrive-evenly-within-a-busy-hour) | 1,317 new requests arrive evenly within a busy hour | Seven assigned pods consume their partitions; distinct jobIds run concurrently up to available permits; lag stays bounded if measured service capacity exceeds arrivals |
+| [R-P03](docs/runtime-scenario-visuals.md#r-p03-20000-jobs-arrive-across-one-day-with-quieter-hours) | 20,000 jobs arrive across one day with quieter hours | Kafka buffers arrival variance; no need to spin up a thread per message; monitor queue age as well as lag |
+| [R-P04](docs/runtime-scenario-visuals.md#r-p04-two-successive-messages-with-same-jobid-share-a-partition) | Two successive messages with same jobId share a partition | Second waits behind first in that partition's per-job FIFO gate; unrelated IDs can overlap |
+| [R-P05](docs/runtime-scenario-visuals.md#r-p05-different-jobs-finish-out-of-offset-order) | Different jobs finish out of offset order | `OffsetCommitTracker` commits only the complete contiguous prefix for each partition; later completed records remain retained |
+| [R-P06](docs/runtime-scenario-visuals.md#r-p06-slow-but-healthy-downstream-reduces-available-permits) | Slow but healthy downstream reduces available permits | Adaptive limiter reduces admission/concurrency, window pauses partition intake, then resumes below low watermark; Kafka retains backlog |
+| [R-P07](docs/runtime-scenario-visuals.md#r-p07-an-assigned-pod-terminates-after-its-handler-and-offset-commit-complete) | An assigned pod terminates *after* its handler and offset commit complete | Surviving consumers rebalance and continue at committed next offsets; a replacement pod may take ownership |
 
 #### Negative/failure runtime paths (failure injection and recovery)
 
 | ID | Trigger / negative scenario | Expected handling and test oracle |
 | --- | --- | --- |
-| R-N01 | 7 pods and 13 partitions | All seven pods receive partitions, but six own two partitions and one owns one; validate uneven per-pod loads and process-level limiter contention |
-| R-N02 | All 7 assigned pods fail | No consumers remain to process 13 partitions until pods restart or replacements join; Kafka retains uncommitted records within retention |
-| R-N03 | One active pod crashes before handler completion or offset commit | Its uncommitted records replay on a new owner; target-side idempotency must withstand repeated external effects |
-| R-N04 | Pod crashes *after* irreversible handler success but *before* offset acknowledgment | Record replays despite completed effect. Verify same `(jobId, executionId)` cannot produce duplicate business effects at target |
-| R-N05 | Rolling restart/HPA scale-up/down triggers rebalance during a 3-minute handler | Revocation stops new admission but does **not** cancel/fence old effects; new owner can replay concurrently. Expose duplicate-overlap window; external fencing is out of scope |
-| R-N06 | All 7 pods are available but partition-key skew puts most jobs on P0 | P0 lag/oldest age rises while other owners are underutilized; no automatic work-stealing of P0 records across consumers |
-| R-N07 | A permanently hung handler holds earliest uncommitted offset | Later finished records cannot advance that partition's committed prefix; retained-work window may saturate. Alert on stuck age and stalled committed offset |
-| R-N08 | Offset 10 hangs while 11–100 complete | Committing 101 would lose offset 10; verify tracker refuses gap-skipping and retained entries count toward window |
-| R-N09 | Kafka commit request times out; outcome unknown | Do not infer a failure or safe release; retain conservatively, retry/reconcile commits, and tolerate replay |
-| R-N10 | Commit broker acknowledgment is lost after broker persisted the commit | Worker may believe commit failed; no unsafe release or false exactly-once claim; verify eventual recovery |
-| R-N11 | Kafka unavailable for 30 minutes during busy hour | About 659 *new* main requests would arrive if producers can still publish or buffer them; if broker unavailable, producer publish may fail and must be retried externally. On restoration, drain existing Kafka backlog while lag/age are monitored |
-| R-N12 | Kafka outage extends beyond topic retention or disk capacity | Pending records can expire or producers can fail; offset-based design does not guarantee recovery once retained data disappears |
-| R-N13 | Retryable handler failure and retry publish fails | Keep failed source incomplete and same-job gate held; retry identical handoff publication without re-invoking the handler |
-| R-N14 | Retry publish succeeds, then source pod dies before commit | Source replays and can publish duplicate retry handoff; `handoffId` identifies duplicate but does not suppress it by itself |
-| R-N15 | A main successor for job A arrives while older job A is running on retry topic | Separate consumer groups/gates allow concurrent main and retry attempts; require downstream concurrency tolerance or future cross-topic fencing |
-| R-N16 | Retry-worker pods absent/unhealthy while main workers are healthy | Main throughput can continue but `jobs.retry.v1` lag/oldest age grows independently; no main pod automatically consumes retry work |
-| R-N17 | Retry storm after a transient dependency outage | One-start/second/pod retry throttle and retry concurrency limit reduce retry pressure; check backlog growth, downstream recovery and starvation |
-| R-N18 | Invalid/oversized/wrong-partition input in main topic | Validate before handler; publish bounded diagnostic DLQ record and wait for ACK before marking source complete |
-| R-N19 | DLQ publication fails during malformed-record handling | Invalid source cannot be safely committed; keep it pending, back off/retry publication, monitor stuck DLQ handoffs |
-| R-N20 | Adaptive main limiter falls below sustainable required capacity due to elevated failures/latency | Lag and oldest age climb; verify limiter stabilization/recovery without overwhelming downstream dependencies |
-| R-N21 | Per-process 1,000-record/16 MiB processing window hits high watermark | Intake pauses for owned partitions; previously polled/reserved records remain bounded; resume only after acknowledged offset commits free sufficient capacity |
-| R-N22 | A rebalance occurs while a consumer has paused partitions and retained work | Old owner must stop admission and discard revoked tracking; new owner reconstructs from Kafka offsets without inheriting stale local state |
-| R-N23 | Consumer exceeds `max.poll.interval.ms` due to blocking handler or event-loop starvation | Consumer may lose group membership and replay occurs; verify handler is nonblocking and poll/heartbeat progress remains healthy |
-| R-N24 | Thirteen partitions hit hot-spot processing and operator increases main pods 7 → 20 | Only 13 of 20 consumers can own partitions; additional pods beyond 13 do not fix a single hot partition; improve per-owner execution capacity or revisit partition/key strategy |
-| R-N25 | Partition count changed from 13 to 26 in place | Kafka key-to-partition mapping can change, breaking intended same-job lane assumptions for existing records; require controlled migration/repartition plan |
-| R-N26 | Topic receives 1,317 requests in one minute, not spread over an hour | Short-term backlog/window pressure can be much higher than hourly-average model suggests; test burst absorption and recovery, not just hourly arithmetic |
-| R-N27 | Poison handler always fails, repeatedly routed into retry and then DLQ | Verify retry attempt bound, terminal DLQ handoff ACK, no endless source re-execution from handoff-send failures |
-| R-N28 | Group has unstable membership (repeated pod crash loops or network flaps) | Rebalances cause interrupted ownership and replay; alert on rebalance frequency and duplicate-effect rate |
-| R-N29 | Kafka broker leader changes during commit/retry handoff | Timeouts/ambiguous outcomes can cause replay or duplicate publication; enforce source-commit ordering and idempotent downstream operations |
-| R-N30 | After scaling beyond 13 pods, consumer has zero partitions but still reports Ready | Readiness alone overstates useful capacity; export owned-partition count and active processing metrics per pod |
-| R-N31 | External side effect succeeds then handler future never completes | Contract violation can leave in-flight work stuck and later replayed; expose execution timeout/age, require safe cancellation or recovery policy |
-| R-N32 | One partition has too many jobs for one active pod despite 6 other healthy pods | Another consumer cannot simultaneously own that partition within the same group; partition-level headroom and key distribution determine scaling |
+| [R-N01](docs/runtime-scenario-visuals.md#r-n01-7-pods-and-13-partitions) | 7 pods and 13 partitions | All seven pods receive partitions, but six own two partitions and one owns one; validate uneven per-pod loads and process-level limiter contention |
+| [R-N02](docs/runtime-scenario-visuals.md#r-n02-all-7-assigned-pods-fail) | All 7 assigned pods fail | No consumers remain to process 13 partitions until pods restart or replacements join; Kafka retains uncommitted records within retention |
+| [R-N03](docs/runtime-scenario-visuals.md#r-n03-one-active-pod-crashes-before-handler-completion-or-offset-commit) | One active pod crashes before handler completion or offset commit | Its uncommitted records replay on a new owner; target-side idempotency must withstand repeated external effects |
+| [R-N04](docs/runtime-scenario-visuals.md#r-n04-pod-crashes-after-irreversible-handler-success-but-before-offset-acknowledgment) | Pod crashes *after* irreversible handler success but *before* offset acknowledgment | Record replays despite completed effect. Verify same `(jobId, executionId)` cannot produce duplicate business effects at target |
+| [R-N05](docs/runtime-scenario-visuals.md#r-n05-rolling-restarthpa-scale-updown-triggers-rebalance-during-a-3-minute-handler) | Rolling restart/HPA scale-up/down triggers rebalance during a 3-minute handler | Revocation stops new admission but does **not** cancel/fence old effects; new owner can replay concurrently. Expose duplicate-overlap window; external fencing is out of scope |
+| [R-N06](docs/runtime-scenario-visuals.md#r-n06-all-7-pods-are-available-but-partition-key-skew-puts-most-jobs-on-p0) | All 7 pods are available but partition-key skew puts most jobs on P0 | P0 lag/oldest age rises while other owners are underutilized; no automatic work-stealing of P0 records across consumers |
+| [R-N07](docs/runtime-scenario-visuals.md#r-n07-a-permanently-hung-handler-holds-earliest-uncommitted-offset) | A permanently hung handler holds earliest uncommitted offset | Later finished records cannot advance that partition's committed prefix; retained-work window may saturate. Alert on stuck age and stalled committed offset |
+| [R-N08](docs/runtime-scenario-visuals.md#r-n08-offset-10-hangs-while-11100-complete) | Offset 10 hangs while 11–100 complete | Committing 101 would lose offset 10; verify tracker refuses gap-skipping and retained entries count toward window |
+| [R-N09](docs/runtime-scenario-visuals.md#r-n09-kafka-commit-request-times-out-outcome-unknown) | Kafka commit request times out; outcome unknown | Do not infer a failure or safe release; retain conservatively, retry/reconcile commits, and tolerate replay |
+| [R-N10](docs/runtime-scenario-visuals.md#r-n10-commit-broker-acknowledgment-is-lost-after-broker-persisted-the-commit) | Commit broker acknowledgment is lost after broker persisted the commit | Worker may believe commit failed; no unsafe release or false exactly-once claim; verify eventual recovery |
+| [R-N11](docs/runtime-scenario-visuals.md#r-n11-kafka-unavailable-for-30-minutes-during-busy-hour) | Kafka unavailable for 30 minutes during busy hour | About 659 *new* main requests would arrive if producers can still publish or buffer them; if broker unavailable, producer publish may fail and must be retried externally. On restoration, drain existing Kafka backlog while lag/age are monitored |
+| [R-N12](docs/runtime-scenario-visuals.md#r-n12-kafka-outage-extends-beyond-topic-retention-or-disk-capacity) | Kafka outage extends beyond topic retention or disk capacity | Pending records can expire or producers can fail; offset-based design does not guarantee recovery once retained data disappears |
+| [R-N13](docs/runtime-scenario-visuals.md#r-n13-retryable-handler-failure-and-retry-publish-fails) | Retryable handler failure and retry publish fails | Keep failed source incomplete and same-job gate held; retry identical handoff publication without re-invoking the handler |
+| [R-N14](docs/runtime-scenario-visuals.md#r-n14-retry-publish-succeeds-then-source-pod-dies-before-commit) | Retry publish succeeds, then source pod dies before commit | Source replays and can publish duplicate retry handoff; `handoffId` identifies duplicate but does not suppress it by itself |
+| [R-N15](docs/runtime-scenario-visuals.md#r-n15-a-main-successor-for-job-a-arrives-while-older-job-a-is-running-on-retry-topic) | A main successor for job A arrives while older job A is running on retry topic | Separate consumer groups/gates allow concurrent main and retry attempts; require downstream concurrency tolerance or future cross-topic fencing |
+| [R-N16](docs/runtime-scenario-visuals.md#r-n16-retry-worker-pods-absentunhealthy-while-main-workers-are-healthy) | Retry-worker pods absent/unhealthy while main workers are healthy | Main throughput can continue but `jobs.retry.v1` lag/oldest age grows independently; no main pod automatically consumes retry work |
+| [R-N17](docs/runtime-scenario-visuals.md#r-n17-retry-storm-after-a-transient-dependency-outage) | Retry storm after a transient dependency outage | One-start/second/pod retry throttle and retry concurrency limit reduce retry pressure; check backlog growth, downstream recovery and starvation |
+| [R-N18](docs/runtime-scenario-visuals.md#r-n18-invalidoversizedwrong-partition-input-in-main-topic) | Invalid/oversized/wrong-partition input in main topic | Validate before handler; publish bounded diagnostic DLQ record and wait for ACK before marking source complete |
+| [R-N19](docs/runtime-scenario-visuals.md#r-n19-dlq-publication-fails-during-malformed-record-handling) | DLQ publication fails during malformed-record handling | Invalid source cannot be safely committed; keep it pending, back off/retry publication, monitor stuck DLQ handoffs |
+| [R-N20](docs/runtime-scenario-visuals.md#r-n20-adaptive-main-limiter-falls-below-sustainable-required-capacity-due-to-elevated-failureslatency) | Adaptive main limiter falls below sustainable required capacity due to elevated failures/latency | Lag and oldest age climb; verify limiter stabilization/recovery without overwhelming downstream dependencies |
+| [R-N21](docs/runtime-scenario-visuals.md#r-n21-per-process-1000-record16-mib-processing-window-hits-high-watermark) | Per-process 1,000-record/16 MiB processing window hits high watermark | Intake pauses for owned partitions; previously polled/reserved records remain bounded; resume only after acknowledged offset commits free sufficient capacity |
+| [R-N22](docs/runtime-scenario-visuals.md#r-n22-a-rebalance-occurs-while-a-consumer-has-paused-partitions-and-retained-work) | A rebalance occurs while a consumer has paused partitions and retained work | Old owner must stop admission and discard revoked tracking; new owner reconstructs from Kafka offsets without inheriting stale local state |
+| [R-N23](docs/runtime-scenario-visuals.md#r-n23-consumer-exceeds-maxpollintervalms-due-to-blocking-handler-or-event-loop-starvation) | Consumer exceeds `max.poll.interval.ms` due to blocking handler or event-loop starvation | Consumer may lose group membership and replay occurs; verify handler is nonblocking and poll/heartbeat progress remains healthy |
+| [R-N24](docs/runtime-scenario-visuals.md#r-n24-thirteen-partitions-hit-hot-spot-processing-and-operator-increases-main-pods-7-20) | Thirteen partitions hit hot-spot processing and operator increases main pods 7 → 20 | Only 13 of 20 consumers can own partitions; additional pods beyond 13 do not fix a single hot partition; improve per-owner execution capacity or revisit partition/key strategy |
+| [R-N25](docs/runtime-scenario-visuals.md#r-n25-partition-count-changed-from-13-to-26-in-place) | Partition count changed from 13 to 26 in place | Kafka key-to-partition mapping can change, breaking intended same-job lane assumptions for existing records; require controlled migration/repartition plan |
+| [R-N26](docs/runtime-scenario-visuals.md#r-n26-topic-receives-1317-requests-in-one-minute-not-spread-over-an-hour) | Topic receives 1,317 requests in one minute, not spread over an hour | Short-term backlog/window pressure can be much higher than hourly-average model suggests; test burst absorption and recovery, not just hourly arithmetic |
+| [R-N27](docs/runtime-scenario-visuals.md#r-n27-poison-handler-always-fails-repeatedly-routed-into-retry-and-then-dlq) | Poison handler always fails, repeatedly routed into retry and then DLQ | Verify retry attempt bound, terminal DLQ handoff ACK, no endless source re-execution from handoff-send failures |
+| [R-N28](docs/runtime-scenario-visuals.md#r-n28-group-has-unstable-membership-repeated-pod-crash-loops-or-network-flaps) | Group has unstable membership (repeated pod crash loops or network flaps) | Rebalances cause interrupted ownership and replay; alert on rebalance frequency and duplicate-effect rate |
+| [R-N29](docs/runtime-scenario-visuals.md#r-n29-kafka-broker-leader-changes-during-commitretry-handoff) | Kafka broker leader changes during commit/retry handoff | Timeouts/ambiguous outcomes can cause replay or duplicate publication; enforce source-commit ordering and idempotent downstream operations |
+| [R-N30](docs/runtime-scenario-visuals.md#r-n30-after-scaling-beyond-13-pods-consumer-has-zero-partitions-but-still-reports-ready) | After scaling beyond 13 pods, consumer has zero partitions but still reports Ready | Readiness alone overstates useful capacity; export owned-partition count and active processing metrics per pod |
+| [R-N31](docs/runtime-scenario-visuals.md#r-n31-external-side-effect-succeeds-then-handler-future-never-completes) | External side effect succeeds then handler future never completes | Contract violation can leave in-flight work stuck and later replayed; expose execution timeout/age, require safe cancellation or recovery policy |
+| [R-N32](docs/runtime-scenario-visuals.md#r-n32-one-partition-has-too-many-jobs-for-one-active-pod-despite-6-other-healthy-pods) | One partition has too many jobs for one active pod despite 6 other healthy pods | Another consumer cannot simultaneously own that partition within the same group; partition-level headroom and key distribution determine scaling |
 
 #### Timeline scenarios: pods joining and dying mid-flight
 
@@ -463,7 +465,7 @@ These timelines supplement R-P01–R-N32. Partition assignments below are
 one consumer and one shared process-level limiter/window; it may own several
 partitions. A rebalance changes ownership, not the number of Kafka records.
 
-**R-T01 — Pod 8 joins halfway through a 1,317-request busy hour (scale 7 → 8).**
+**R-T01 — Pod 8 joins halfway through a 1,317-request busy hour (scale 7 → 8).** [View diagram](docs/runtime-scenario-visuals.md#r-t01-pod-8-joins-halfway-through-a-1317-request-busy-hour-scale-7-8)
 
 1. At 00:00, 7 pods own all 13 partitions: six own two and one owns one
    (balanced example). Producers continuously enqueue jobs by jobId.
@@ -485,7 +487,7 @@ partitions. A rebalance changes ownership, not the number of Kafka records.
    those external effects. Verify target idempotency, offset safety, job age,
    rebalance duration and no lost requests.
 
-**R-T02 — Pod 3 dies abruptly halfway through executing two partitions (7 → 6).**
+**R-T02 — Pod 3 dies abruptly halfway through executing two partitions (7 → 6).** [View diagram](docs/runtime-scenario-visuals.md#r-t02-pod-3-dies-abruptly-halfway-through-executing-two-partitions-7-6)
 
 1. At 00:30, Pod 3 owns (example) P4 and P11. It is running job A at P4
    offset 500, and job B at P11 offset 900. Later offsets may have completed
@@ -506,50 +508,50 @@ partitions. A rebalance changes ownership, not the number of Kafka records.
    cluster-wide per minute of disrupted processing; actual lag depends on
    the work the six healthy pods continue to process.
 
-**R-T03 — Graceful pod termination during a long-running job.**
+**R-T03 — Graceful pod termination during a long-running job.** [View diagram](docs/runtime-scenario-visuals.md#r-t03-graceful-pod-termination-during-a-long-running-job)
 Pause intake, stop new dispatch, drain up to the current 30-second shutdown
 deadline, commit only eligible prefixes; if a handler takes 180 seconds,
 shutdown may expire and the new owner will replay it. Confirm Kubernetes
 termination-grace-period is coordinated with the drain policy. Graceful
 termination is **not** guaranteed exact-once work.
 
-**R-T04 — Pod replacement returns after R-T02 (6 → 7).**
+**R-T04 — Pod replacement returns after R-T02 (6 → 7).** [View diagram](docs/runtime-scenario-visuals.md#r-t04-pod-replacement-returns-after-r-t02-6-7)
 The replacement joins the group, causing another rebalance. Assignment can
 return to six pods with two partitions and one with one. Recovery must not
 assume the replacement regains its original partitions. Confirm queue-age
 recovery and that already committed offsets are not replayed as fresh work.
 
-**R-T05 — Scale all the way from 7 → 13 pods during backlog.**
+**R-T05 — Scale all the way from 7 → 13 pods during backlog.** [View diagram](docs/runtime-scenario-visuals.md#r-t05-scale-all-the-way-from-7-13-pods-during-backlog)
 Each pod can own one of the 13 partitions after rebalance. This can increase
 per-pod execution/window budgets available to busy partitions, but it cannot
 split one hot partition across multiple group consumers. Scaling 13 → 14
 leaves at least one consumer unassigned.
 
-**R-T06 — Pod joins while a retry handoff is awaiting broker ACK.**
+**R-T06 — Pod joins while a retry handoff is awaiting broker ACK.** [View diagram](docs/runtime-scenario-visuals.md#r-t06-pod-joins-while-a-retry-handoff-is-awaiting-broker-ack)
 An old owner may receive an ACK after revocation, but cannot safely assume it
 owns or committed the source. A new owner may replay and publish the same
 `handoffId`; downstream must handle duplicate handoffs. Retry-worker ownership
 is separate and does not share main-topic jobId gates.
 
-**R-T07 — Partition ownership changes during an ambiguous commit timeout.**
+**R-T07 — Partition ownership changes during an ambiguous commit timeout.** [View diagram](docs/runtime-scenario-visuals.md#r-t07-partition-ownership-changes-during-an-ambiguous-commit-timeout)
 Capture committed offsets before and after the rebalance. A late old-owner
 commit/ACK must not be mistaken for proof that the successor's in-memory
 tracker is complete. Inject broker delay, lost ACK, then restart/reassign;
 verify retained records are either safely committed or replayed, never skipped.
 
-**R-T08 — Repeated 7 → 8 → 7 autoscaling while jobs run.**
+**R-T08 — Repeated 7 → 8 → 7 autoscaling while jobs run.** [View diagram](docs/runtime-scenario-visuals.md#r-t08-repeated-7-8-7-autoscaling-while-jobs-run)
 Measure rebalance thrashing, replay count, duplicate effect attempts, stall
 duration, and useful throughput. Apply scale-down stabilization and consider
 cooperative assignment/static membership only with explicit test evidence.
 
-**R-T09 — Two pod failures during the same busy hour (7 → 5).**
+**R-T09 — Two pod failures during the same busy hour (7 → 5).** [View diagram](docs/runtime-scenario-visuals.md#r-t09-two-pod-failures-during-the-same-busy-hour-7-5)
 All 13 partitions remain assigned if five consumers survive, but balanced
 assignment becomes three pods with three partitions and two with two.
 Backpressure and process-level permit/window contention increase; calculate
 time to drain backlog rather than asserting that two surviving partitions
 become idle.
 
-**R-T10 — Pod joins while P0 has a stuck offset and a full retained window.**
+**R-T10 — Pod joins while P0 has a stuck offset and a full retained window.** [View diagram](docs/runtime-scenario-visuals.md#r-t10-pod-joins-while-p0-has-a-stuck-offset-and-a-full-retained-window)
 If P0 moves, the incoming owner replays from the last committed next offset.
 That may reset local in-flight state but does not fix a poisonous or indefinitely
 hanging handler; ensure an explicit timeout/recovery policy or alert escalation.
