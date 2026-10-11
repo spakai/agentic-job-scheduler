@@ -372,6 +372,111 @@ pause/poll/commit/resume.
 
 ---
 
+### 6.8 Runtime scenarios: 20,000 requests/day; five main partitions; thirteen main pods
+
+**Scenario assumptions (illustrative deployment, not current Spec 002 defaults).**
+The main topic `jobs.main.v1` is pre-created with **5 fixed partitions** and receives
+**20,000 new requests/day**. That is **833.3/hour** or **0.2315/second** on a
+24-hour arithmetic mean. **1,317/hour** (**0.366/second**) is the assumed
+**busy-hour arrival rate**, *not* the mean derived from 20,000/day and not a
+guaranteed maximum burst rate. The example uses **13 main-worker pods**, one
+`KafkaWorker`/consumer per pod, all joining `job-main-v1`. Retry-worker pods
+belong to another group and must be sized separately. Assume keys are reasonably
+balanced, all consumers are healthy, and the deployment can process jobs faster
+than arrivals when no fault is present. These are proposed test cases, not
+claims that the corresponding end-to-end tests have run.
+
+| Dimension | Result / implication |
+| --- | --- |
+| Main partitions | 5; no more than 5 active main consumers in the group at a time |
+| Main pods | 13; **5 assigned, 8 unassigned/idle** in steady state |
+| Main partitions per active pod | 1 with a balanced assignment; assignments can change at rebalance |
+| Mean arrival rate | 833.3/hour = 13.89/min = 0.2315/s cluster-wide |
+| Busy-hour planning rate | 1,317/hour = 21.95/min = 0.366/s cluster-wide |
+| Evenly distributed busy hour | ~263.4 jobs/hour per partition (~4.39/min); skew is possible |
+| Queueing model | Kafka backlog + bounded fetched/in-flight records; not one thread per partition |
+| Throughput bottleneck | Five active consumers, job duration, per-pod adaptive permits, downstream capacity and offset/pause effects; partition count alone is not the handler-concurrency ceiling |
+
+**Capacity test formula.** If an active pod sustains `c` independent,
+nonblocking handler executions of average duration `d` seconds, its idealized
+handler capacity is `3600*c/d` jobs/hour, before downstream saturation,
+skew, pauses, commit stalls, failures and retries. Across five active pods the
+ideal bound is `5*3600*c/d`. At `d = 180s`, `c = 1` gives 100/hour
+cluster-wide (below the busy-hour arrival rate); `c = 14` gives 1,400/hour
+(only slight ideal headroom). At `d = 60s`, `c = 5` gives 1,500/hour.
+These are *hypotheses to load-test*, not throughput guarantees. A 1,317/hour
+busy hour is not proof that microbursts cannot exceed the capacity/window.
+
+#### Positive/expected runtime paths
+
+| ID | Scenario | Expected behavior / observable assertion |
+| --- | --- | --- |
+| R-P01 | All 13 main pods start simultaneously on an empty group | Group stabilizes with exactly 5 partition owners and 8 unassigned consumers; no records lost |
+| R-P02 | 1,317 new requests arrive evenly within a busy hour | Five assigned pods consume their partitions; distinct jobIds run concurrently up to available permits; lag stays bounded if measured service capacity exceeds arrivals |
+| R-P03 | 20,000 jobs arrive across one day with quieter hours | Kafka buffers arrival variance; no need to spin up a thread per message; monitor queue age as well as lag |
+| R-P04 | Two successive messages with same jobId share a partition | Second waits behind first in that partition's per-job FIFO gate; unrelated IDs can overlap |
+| R-P05 | Different jobs finish out of offset order | `OffsetCommitTracker` commits only the complete contiguous prefix for each partition; later completed records remain retained |
+| R-P06 | Slow but healthy downstream reduces available permits | Adaptive limiter reduces admission/concurrency, window pauses partition intake, then resumes below low watermark; Kafka retains backlog |
+| R-P07 | An assigned pod terminates *after* its handler and offset commit complete | Surviving consumers rebalance and continue at committed next offsets; a replacement pod may take ownership |
+
+#### Negative/failure runtime paths (failure injection and recovery)
+
+| ID | Trigger / negative scenario | Expected handling and test oracle |
+| --- | --- | --- |
+| R-N01 | 13 pods but only 5 partitions | Eight main pods receive **no partitions**: they add overhead, not main-topic throughput. Observe assignment metrics; avoid treating replica count as worker capacity |
+| R-N02 | All 5 assigned pods fail while 8 initially idle pods remain alive | Group must reassign five partitions to surviving pods; backlog grows during detection/rebalance, then drains |
+| R-N03 | One active pod crashes before handler completion or offset commit | Its uncommitted records replay on a new owner; target-side idempotency must withstand repeated external effects |
+| R-N04 | Pod crashes *after* irreversible handler success but *before* offset acknowledgment | Record replays despite completed effect. Verify same `(jobId, executionId)` cannot produce duplicate business effects at target |
+| R-N05 | Rolling restart/HPA scale-up/down triggers rebalance during a 3-minute handler | Revocation stops new admission but does **not** cancel/fence old effects; new owner can replay concurrently. Expose duplicate-overlap window; external fencing is out of scope |
+| R-N06 | All 13 pods are available but partition-key skew puts most jobs on P0 | P0 lag/oldest age rises while other owners are underutilized; no automatic work-stealing of P0 records across consumers |
+| R-N07 | A permanently hung handler holds earliest uncommitted offset | Later finished records cannot advance that partition's committed prefix; retained-work window may saturate. Alert on stuck age and stalled committed offset |
+| R-N08 | Offset 10 hangs while 11–100 complete | Committing 101 would lose offset 10; verify tracker refuses gap-skipping and retained entries count toward window |
+| R-N09 | Kafka commit request times out; outcome unknown | Do not infer a failure or safe release; retain conservatively, retry/reconcile commits, and tolerate replay |
+| R-N10 | Commit broker acknowledgment is lost after broker persisted the commit | Worker may believe commit failed; no unsafe release or false exactly-once claim; verify eventual recovery |
+| R-N11 | Kafka unavailable for 30 minutes during busy hour | About 659 *new* main requests would arrive if producers can still publish or buffer them; if broker unavailable, producer publish may fail and must be retried externally. On restoration, drain existing Kafka backlog while lag/age are monitored |
+| R-N12 | Kafka outage extends beyond topic retention or disk capacity | Pending records can expire or producers can fail; offset-based design does not guarantee recovery once retained data disappears |
+| R-N13 | Retryable handler failure and retry publish fails | Keep failed source incomplete and same-job gate held; retry identical handoff publication without re-invoking the handler |
+| R-N14 | Retry publish succeeds, then source pod dies before commit | Source replays and can publish duplicate retry handoff; `handoffId` identifies duplicate but does not suppress it by itself |
+| R-N15 | A main successor for job A arrives while older job A is running on retry topic | Separate consumer groups/gates allow concurrent main and retry attempts; require downstream concurrency tolerance or future cross-topic fencing |
+| R-N16 | Retry-worker pods absent/unhealthy while main workers are healthy | Main throughput can continue but `jobs.retry.v1` lag/oldest age grows independently; no main pod automatically consumes retry work |
+| R-N17 | Retry storm after a transient dependency outage | One-start/second/pod retry throttle and retry concurrency limit reduce retry pressure; check backlog growth, downstream recovery and starvation |
+| R-N18 | Invalid/oversized/wrong-partition input in main topic | Validate before handler; publish bounded diagnostic DLQ record and wait for ACK before marking source complete |
+| R-N19 | DLQ publication fails during malformed-record handling | Invalid source cannot be safely committed; keep it pending, back off/retry publication, monitor stuck DLQ handoffs |
+| R-N20 | Adaptive main limiter falls below sustainable required capacity due to elevated failures/latency | Lag and oldest age climb; verify limiter stabilization/recovery without overwhelming downstream dependencies |
+| R-N21 | Per-process 1,000-record/16 MiB processing window hits high watermark | Intake pauses for owned partitions; previously polled/reserved records remain bounded; resume only after acknowledged offset commits free sufficient capacity |
+| R-N22 | A rebalance occurs while a consumer has paused partitions and retained work | Old owner must stop admission and discard revoked tracking; new owner reconstructs from Kafka offsets without inheriting stale local state |
+| R-N23 | Consumer exceeds `max.poll.interval.ms` due to blocking handler or event-loop starvation | Consumer may lose group membership and replay occurs; verify handler is nonblocking and poll/heartbeat progress remains healthy |
+| R-N24 | Five partitions hit hot-spot processing and operator increases main pods 13 → 20 | Still at most five active consumers: additional pods do not fix hot partitions; improve per-owner execution capacity or revisit partition/key strategy |
+| R-N25 | Partition count changed from 5 to 10 in place | Kafka key-to-partition mapping can change, breaking intended same-job lane assumptions for existing records; require controlled migration/repartition plan |
+| R-N26 | Topic receives 1,317 requests in one minute, not spread over an hour | Short-term backlog/window pressure can be much higher than hourly-average model suggests; test burst absorption and recovery, not just hourly arithmetic |
+| R-N27 | Poison handler always fails, repeatedly routed into retry and then DLQ | Verify retry attempt bound, terminal DLQ handoff ACK, no endless source re-execution from handoff-send failures |
+| R-N28 | Group has unstable membership (repeated pod crash loops or network flaps) | Rebalances cause interrupted ownership and replay; alert on rebalance frequency and duplicate-effect rate |
+| R-N29 | Kafka broker leader changes during commit/retry handoff | Timeouts/ambiguous outcomes can cause replay or duplicate publication; enforce source-commit ordering and idempotent downstream operations |
+| R-N30 | Consumer has zero partitions but still reports Ready | Readiness alone overstates useful capacity; export owned-partition count and active processing metrics per pod |
+| R-N31 | External side effect succeeds then handler future never completes | Contract violation can leave in-flight work stuck and later replayed; expose execution timeout/age, require safe cancellation or recovery policy |
+| R-N32 | One partition has too many jobs for one active pod despite 12 other healthy pods | Eight idle pods cannot share that partition within the same group; partition-level headroom and key distribution determine scaling |
+
+**Verification/observability gates.** For every scenario capture:
+assigned partitions and consumer-group generation; main/retry/DLQ lag and
+oldest-unprocessed age by partition; delivered/retained record count and bytes;
+window pause/resume; active and permitted handler counts; per-job gate waits;
+handler outcome/latency; failed/acknowledged handoffs; source commit proposed,
+acknowledged or failed; rebalance count/duration; replay and duplicate-effect
+evidence. Separate **observed integration evidence** from **expected behavior**
+until executed under Testcontainers/Compose or Kubernetes fault injection.
+
+**Architecture decision checkpoint.** At five partitions, thirteen main-worker
+replicas are primarily standby rather than horizontal throughput capacity.
+Do **not** change partition count casually, because keyed ordering may change.
+Do **not** claim exactly-once handler effects or strict main/retry job exclusion:
+the accepted Kafka-only design requires target-side idempotency and accepts
+unfenced execution under rebalance. If guaranteed exclusive ownership,
+durable per-job interrogation, or partition-independent scaling becomes a
+requirement, propose a new ADR (e.g. durable claim/fencing or request inbox)
+with explicit spec and recovery-contract changes.
+
+---
+
 ## 7. Deployment view
 
 ```text
