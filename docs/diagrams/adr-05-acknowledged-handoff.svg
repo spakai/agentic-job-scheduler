@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="635" viewBox="0 0 1120 635" role="img" aria-labelledby="title description">
+<title id="title">ADR 5: A handoff must be acknowledged</title>
+<desc id="description">Handler failure frees execution capacity only after work stops; the same-job gate stays held</desc>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 Z" fill="#52647a"/></marker></defs>
+<style>text {font-family:Arial,Helvetica,sans-serif;fill:#182b43} .heading {font-size:25px;font-weight:700} .label {font-size:19px;font-weight:700} .detail {font-size:17px} .small {font-size:15px;fill:#42556c} .line {fill:none;stroke:#52647a;stroke-width:2;marker-end:url(#arrow)}</style>
+<rect width="1120" height="635" rx="16" fill="white"/>
+<text x="36" y="44" class="heading" text-anchor="start">ADR 5 · A handoff must be acknowledged</text>
+<text x="36" y="75" class="detail" text-anchor="start">Handler failure frees execution capacity only after work stops; the same-job gate stays held</text>
+<rect x="36" y="133" width="305" height="105" rx="12" fill="#edf5ff" stroke="#bdcbd9"/>
+<text x="188.5" y="178.5" class="label" text-anchor="middle">Handler future fails</text>
+<text x="188.5" y="205.5" class="detail" text-anchor="middle">Work has stopped</text>
+<rect x="406" y="133" width="330" height="105" rx="12" fill="#edf5ff" stroke="#bdcbd9"/>
+<text x="571.0" y="178.5" class="label" text-anchor="middle">Publish retry or DLQ</text>
+<text x="571.0" y="205.5" class="detail" text-anchor="middle">Source still incomplete</text>
+<rect x="801" y="133" width="283" height="105" rx="12" fill="#eff8f4" stroke="#bdcbd9"/>
+<text x="942.5" y="178.5" class="label" text-anchor="middle">Broker ACK</text>
+<text x="942.5" y="205.5" class="detail" text-anchor="middle">Handoff accepted</text>
+<path d="M341 185 H404" class="line"/>
+<path d="M736 185 H799" class="line"/>
+<rect x="406" y="342" width="330" height="100" rx="12" fill="#fff4df" stroke="#bdcbd9"/>
+<text x="571.0" y="385.0" class="label" text-anchor="middle">Send failed</text>
+<text x="571.0" y="412.0" class="detail" text-anchor="middle">Retry the identical handoff</text>
+<path d="M571 238 V340" class="line"/>
+<text x="601" y="291" class="small" text-anchor="middle">Failure</text>
+<path d="M406 392 H375 V209 H404" class="line" stroke-dasharray="6 4"/>
+<rect x="801" y="342" width="283" height="100" rx="12" fill="#eff8f4" stroke="#bdcbd9"/>
+<text x="942.5" y="385.0" class="label" text-anchor="middle">Complete source</text>
+<text x="942.5" y="412.0" class="detail" text-anchor="middle">Release same-job gate</text>
+<path d="M942 238 V340" class="line"/>
+<text x="55" y="330" class="label" text-anchor="start">While publication is pending:</text>
+<text x="55" y="364" class="detail" text-anchor="start">A2 stays behind A1’s gate.</text>
+<text x="55" y="395" class="detail" text-anchor="start">Other job IDs may use capacity.</text>
+<text x="55" y="426" class="detail" text-anchor="start">Do not rerun A1 for a send failure.</text>
+<rect x="36" y="535" width="1048" height="82" rx="12" fill="#f3f5f8" stroke="#bdcbd9"/>
+<text x="560" y="563" class="detail" text-anchor="middle">Source completion makes a record eligible for a safe-prefix commit; it is not itself a commit.</text>
+<text x="560" y="589" class="detail" text-anchor="middle">Crash after publication but before source commit can produce duplicate handoffs.</text>
+</svg>

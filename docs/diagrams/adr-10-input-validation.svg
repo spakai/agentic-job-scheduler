@@ -1,0 +1,34 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="600" viewBox="0 0 1120 600" role="img" aria-labelledby="title description">
+<title id="title">ADR 10: Validate raw input before dispatch</title>
+<desc id="description">Kafka bytes → bounded validation → handler or acknowledged DLQ handoff</desc>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 Z" fill="#52647a"/></marker></defs>
+<style>text {font-family:Arial,Helvetica,sans-serif;fill:#182b43} .heading {font-size:25px;font-weight:700} .label {font-size:19px;font-weight:700} .detail {font-size:17px} .small {font-size:15px;fill:#42556c} .line {fill:none;stroke:#52647a;stroke-width:2;marker-end:url(#arrow)}</style>
+<rect width="1120" height="600" rx="16" fill="white"/>
+<text x="36" y="44" class="heading" text-anchor="start">ADR 10 · Validate raw input before dispatch</text>
+<text x="36" y="75" class="detail" text-anchor="start">Kafka bytes → bounded validation → handler or acknowledged DLQ handoff</text>
+<rect x="36" y="140" width="233" height="100" rx="12" fill="#edf5ff" stroke="#bdcbd9"/>
+<text x="152.5" y="183.0" class="label" text-anchor="middle">Raw key + value</text>
+<text x="152.5" y="210.0" class="detail" text-anchor="middle">Byte deserialization</text>
+<rect x="330" y="140" width="380" height="100" rx="12" fill="#edf5ff" stroke="#bdcbd9"/>
+<text x="520.0" y="183.0" class="label" text-anchor="middle">Envelope + routing checks</text>
+<text x="520.0" y="210.0" class="detail" text-anchor="middle">Size, JSON, identity, key/partition</text>
+<path d="M269 190 H328" class="line"/>
+<rect x="790" y="125" width="294" height="90" rx="12" fill="#eff8f4" stroke="#bdcbd9"/>
+<text x="937.0" y="163.0" class="label" text-anchor="middle">Validated job</text>
+<text x="937.0" y="190.0" class="detail" text-anchor="middle">Enter same-job lane</text>
+<path d="M710 170 H788" class="line"/>
+<text x="749" y="154" class="small" text-anchor="middle">Valid</text>
+<rect x="790" y="312" width="294" height="110" rx="12" fill="#fff4df" stroke="#bdcbd9"/>
+<text x="937.0" y="346.5" class="label" text-anchor="middle">Bounded invalid DLQ</text>
+<text x="937.0" y="373.5" class="detail" text-anchor="middle">Source + code + hashes</text>
+<text x="937.0" y="400.5" class="detail" text-anchor="middle">At most 256 sample bytes</text>
+<path d="M710 216 H748 V366 H788" class="line"/>
+<text x="750" y="290" class="small" text-anchor="middle">Invalid</text>
+<rect x="330" y="312" width="380" height="110" rx="12" fill="#edf5ff" stroke="#bdcbd9"/>
+<text x="520.0" y="360.0" class="label" text-anchor="middle">Wait for DLQ acknowledgment</text>
+<text x="520.0" y="387.0" class="detail" text-anchor="middle">Only then complete the source</text>
+<path d="M790 394 H712" class="line"/>
+<rect x="36" y="500" width="1048" height="82" rx="12" fill="#f3f5f8" stroke="#bdcbd9"/>
+<text x="560" y="528" class="detail" text-anchor="middle">Valid jobs that fail routing preserve their job identity in the DLQ.</text>
+<text x="560" y="554" class="detail" text-anchor="middle">Use sanitized diagnostic codes; do not log raw payloads or credentials.</text>
+</svg>

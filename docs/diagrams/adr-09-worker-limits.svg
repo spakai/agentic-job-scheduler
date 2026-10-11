@@ -1,0 +1,69 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="760" viewBox="0 0 1120 760" role="img" aria-labelledby="title description">
+  <title id="title">ADR 9: independent main and retry worker limits</title>
+  <desc id="description">Intended policy per pod. A main job needs an execution permit from an adaptive limit, initially 16 and bounded between 1 and 128. Five-second measurement windows adjust that limit. A retry job needs both a free concurrency slot and a rate token, defaulting to two simultaneous handlers and one start per second with burst one. If either condition is unavailable, the job waits. Handler future settlement releases the execution permit; cancellation request alone does not.</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 Z" fill="#52647a"/>
+    </marker>
+    <style>
+      text { font-family: Arial, Helvetica, sans-serif; fill: #182b43; }
+      .heading { font-size: 25px; font-weight: 700; }
+      .panelTitle { font-size: 22px; font-weight: 700; }
+      .label { font-size: 18px; font-weight: 700; }
+      .detail { font-size: 16px; }
+      .small { font-size: 14px; fill: #42556c; }
+      .box { fill: #fff; stroke: #bccada; stroke-width: 1.5; }
+      .line { fill: none; stroke: #52647a; stroke-width: 2; marker-end: url(#arrow); }
+    </style>
+  </defs>
+
+  <rect width="1120" height="760" rx="16" fill="#fff"/>
+  <text x="40" y="43" class="heading">Two controls for downstream pressure</text>
+  <text x="40" y="71" class="detail">ADR 9 intended policy · independent budgets per pod · default retry settings shown</text>
+
+  <rect x="32" y="98" width="516" height="548" rx="16" fill="#edf5ff" stroke="#b4cce8"/>
+  <rect x="572" y="98" width="516" height="548" rx="16" fill="#eff8f4" stroke="#b5d8c8"/>
+  <text x="60" y="135" class="panelTitle">MAIN WORKER</text>
+  <text x="60" y="161" class="detail">Adaptive concurrency · initially 16 · range 1–128</text>
+  <text x="600" y="135" class="panelTitle">RETRY WORKER</text>
+  <text x="600" y="161" class="detail">Fixed concurrency + limited start rate</text>
+
+  <rect x="72" y="190" width="436" height="58" rx="10" class="box"/>
+  <text x="290" y="226" text-anchor="middle" class="label">Runnable main job</text>
+  <path d="M290 248 V278" class="line"/>
+  <rect x="72" y="280" width="436" height="82" rx="10" fill="#dceaff" stroke="#83a8d6" stroke-width="1.5"/>
+  <text x="290" y="311" text-anchor="middle" class="label">Free adaptive permit?</text>
+  <text x="290" y="340" text-anchor="middle" class="detail">No → wait until usage permits a start</text>
+  <path d="M290 362 V402" class="line"/>
+  <text x="304" y="387" class="small">Yes</text>
+  <rect x="72" y="404" width="436" height="64" rx="10" class="box"/>
+  <text x="290" y="442" text-anchor="middle" class="label">Acquire permit; start handler</text>
+  <path d="M290 468 V506" class="line"/>
+  <text x="304" y="492" class="small">Measured completions</text>
+  <rect x="72" y="508" width="436" height="110" rx="10" class="box"/>
+  <text x="290" y="537" text-anchor="middle" class="label">Evaluate every 5 seconds</text>
+  <text x="290" y="564" text-anchor="middle" class="detail">Unhealthy: halve · Healthy backlog: add 1</text>
+  <text x="290" y="591" text-anchor="middle" class="small">Sample threshold and exceptions explained below</text>
+  <path d="M508 563 H530 V321 H510" class="line" stroke-dasharray="5 4"/>
+
+  <rect x="612" y="190" width="436" height="58" rx="10" class="box"/>
+  <text x="830" y="226" text-anchor="middle" class="label">Runnable retry job</text>
+  <path d="M830 248 V278" class="line"/>
+  <rect x="612" y="280" width="436" height="82" rx="10" fill="#d9eee3" stroke="#83b79c" stroke-width="1.5"/>
+  <text x="830" y="311" text-anchor="middle" class="label">Free slot AND token?</text>
+  <text x="830" y="340" text-anchor="middle" class="detail">No → wait until both are available</text>
+  <path d="M830 362 V402" class="line"/>
+  <text x="844" y="387" class="small">Yes</text>
+  <rect x="612" y="404" width="436" height="64" rx="10" class="box"/>
+  <text x="830" y="431" text-anchor="middle" class="label">Acquire slot; consume token</text>
+  <text x="830" y="454" text-anchor="middle" class="detail">Start handler</text>
+  <rect x="612" y="508" width="436" height="110" rx="10" class="box"/>
+  <text x="830" y="537" text-anchor="middle" class="label">Two independent requirements</text>
+  <text x="830" y="564" text-anchor="middle" class="detail">Concurrency: at most 2 running handlers</text>
+  <text x="830" y="591" text-anchor="middle" class="detail">Rate: 1 token/second · store at most 1</text>
+  <path d="M1048 563 H1070 V321 H1050" class="line" stroke-dasharray="5 4"/>
+
+  <rect x="32" y="668" width="1056" height="68" rx="12" fill="#f3f5f8"/>
+  <text x="560" y="695" text-anchor="middle" class="label">Release a handler permit only when its future settles</text>
+  <text x="560" y="720" text-anchor="middle" class="detail">Timeout cancellation requests do not release it. Same-job gates also wait for required handoff acknowledgment.</text>
+</svg>

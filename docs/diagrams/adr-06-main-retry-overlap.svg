@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="595" viewBox="0 0 1120 595" role="img" aria-labelledby="title description">
+<title id="title">ADR 6: Main and retry may overlap for the same job</title>
+<desc id="description">Independent topics and consumer groups · time moves left to right</desc>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 Z" fill="#52647a"/></marker></defs>
+<style>text {font-family:Arial,Helvetica,sans-serif;fill:#182b43} .heading {font-size:25px;font-weight:700} .label {font-size:19px;font-weight:700} .detail {font-size:17px} .small {font-size:15px;fill:#42556c} .line {fill:none;stroke:#52647a;stroke-width:2;marker-end:url(#arrow)}</style>
+<rect width="1120" height="595" rx="16" fill="white"/>
+<text x="36" y="44" class="heading" text-anchor="start">ADR 6 · Main and retry may overlap for the same job</text>
+<text x="36" y="75" class="detail" text-anchor="start">Independent topics and consumer groups · time moves left to right</text>
+<rect x="36" y="121" width="1048" height="152" rx="12" fill="#edf5ff" stroke="#bdcbd9"/>
+<text x="57" y="152" class="label" text-anchor="start">MAIN · jobs.main.v1 · group job-main-v1</text>
+<rect x="60" y="177" width="252" height="69" rx="12" fill="#fff" stroke="#bdcbd9"/>
+<text x="186.0" y="218.0" class="label" text-anchor="middle">A1 fails and stops</text>
+<rect x="390" y="177" width="220" height="69" rx="12" fill="#fff" stroke="#bdcbd9"/>
+<text x="500.0" y="218.0" class="label" text-anchor="middle">Publish retry A1</text>
+<rect x="718" y="177" width="340" height="69" rx="12" fill="#eff8f4" stroke="#bdcbd9"/>
+<text x="888.0" y="218.0" class="label" text-anchor="middle">A2 running</text>
+<path d="M312 211 H388" class="line"/>
+<path d="M610 211 H716" class="line"/>
+<text x="665" y="196" class="small" text-anchor="middle">ACK releases gate</text>
+<rect x="36" y="320" width="1048" height="143" rx="12" fill="#eff8f4" stroke="#bdcbd9"/>
+<text x="57" y="353" class="label" text-anchor="start">RETRY · jobs.retry.v1 · group job-retry-v1</text>
+<rect x="718" y="379" width="340" height="60" rx="12" fill="#fff" stroke="#bdcbd9"/>
+<text x="888.0" y="415.5" class="label" text-anchor="middle">Retry A1 running</text>
+<path d="M500 246 V409 H716" class="line"/>
+<text x="610" y="393" class="small" text-anchor="middle">Attempt 2</text>
+<text x="892" y="303" class="label" text-anchor="middle">Overlap allowed</text>
+<rect x="36" y="495" width="1048" height="82" rx="12" fill="#f3f5f8" stroke="#bdcbd9"/>
+<text x="560" y="523" class="detail" text-anchor="middle">The retry may start before the main worker receives its publication acknowledgment.</text>
+<text x="560" y="549" class="detail" text-anchor="middle">Retry workers execute directly and may publish another retry; they never forward to main.</text>
+</svg>

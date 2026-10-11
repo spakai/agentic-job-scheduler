@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="570" viewBox="0 0 1120 570" role="img" aria-labelledby="title description">
+<title id="title">ADR 3: One running execution per same-job lane</title>
+<desc id="description">Stable ownership within one topic · different job IDs can run concurrently</desc>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 Z" fill="#52647a"/></marker></defs>
+<style>text {font-family:Arial,Helvetica,sans-serif;fill:#182b43} .heading {font-size:25px;font-weight:700} .label {font-size:19px;font-weight:700} .detail {font-size:17px} .small {font-size:15px;fill:#42556c} .line {fill:none;stroke:#52647a;stroke-width:2;marker-end:url(#arrow)}</style>
+<rect width="1120" height="570" rx="16" fill="white"/>
+<text x="36" y="44" class="heading" text-anchor="start">ADR 3 · One running execution per same-job lane</text>
+<text x="36" y="75" class="detail" text-anchor="start">Stable ownership within one topic · different job IDs can run concurrently</text>
+<rect x="36" y="117" width="1048" height="306" rx="12" fill="#f3f5f8" stroke="#bdcbd9"/>
+<text x="60" y="150" class="label" text-anchor="start">One owning worker · one topic · fixed keyed partition routing</text>
+<text x="60" y="217" class="label" text-anchor="start">Job A</text>
+<rect x="180" y="178" width="265" height="85" rx="12" fill="#eff8f4" stroke="#bdcbd9"/>
+<text x="312.5" y="227.0" class="label" text-anchor="middle">A1 running</text>
+<rect x="540" y="178" width="265" height="85" rx="12" fill="#fff4df" stroke="#bdcbd9"/>
+<text x="672.5" y="227.0" class="label" text-anchor="middle">A2 waiting</text>
+<path d="M445 220 H538" class="line"/>
+<text x="491" y="203" class="small" text-anchor="middle">Gate release</text>
+<text x="840" y="221" class="small" text-anchor="start">A2 cannot overlap A1</text>
+<text x="60" y="342" class="label" text-anchor="start">Job B</text>
+<rect x="180" y="303" width="265" height="85" rx="12" fill="#eff8f4" stroke="#bdcbd9"/>
+<text x="312.5" y="352.0" class="label" text-anchor="middle">B1 running</text>
+<text x="490" y="342" class="detail" text-anchor="start">A1 and B1 may overlap, even in the same partition</text>
+<rect x="36" y="470" width="1048" height="82" rx="12" fill="#f3f5f8" stroke="#bdcbd9"/>
+<text x="560" y="498" class="detail" text-anchor="middle">Release Job A’s gate after success or acknowledged retry/DLQ handoff.</text>
+<text x="560" y="524" class="detail" text-anchor="middle">Ownership loss can allow replay to overlap old work; there is no external-effect fencing.</text>
+</svg>

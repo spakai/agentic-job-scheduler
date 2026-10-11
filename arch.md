@@ -432,11 +432,25 @@ Status values: Accepted, Superseded. Context for all ADRs is [Spec 002](specs/00
 - **Decision:** Kafka records and consumer-group offsets hold pending work. No PostgreSQL, Flyway, REST API, scheduling-state topic, or RocksDB.
 - **Consequences:** Simple operations and replay from offsets. Records can expire under retention during long outages; no durable deduplication or query API.
 
+![ADR 1: Kafka records retain work, while consumer-group offsets determine where a worker resumes after restart.](docs/diagrams/adr-01-kafka-backlog.svg)
+
+The durable boundary is Kafka: a worker rebuilds its in-memory queues from
+uncommitted records after restart. Offsets are scoped to a consumer group, topic,
+and partition. They neither deduplicate handler effects nor prevent retention
+from removing unfinished work (B09/B10/B18).
+
 ### ADR 2: Immediate processing; no delayed scheduling
 
 - **Status:** Accepted (supersedes the earlier delayed-scheduling draft).
 - **Decision:** A valid record runs as soon as it is its per-job queue head and a permit exists. No `scheduledAt`/`notBefore`; such fields are rejected.
 - **Consequences:** No timer indexes. Waiting for a permit is backpressure, not scheduling. Delays happen only via the slower retry path.
+
+![ADR 2: a validated queue head starts when its same-job gate and execution capacity are available; otherwise it waits for a state change.](docs/diagrams/adr-02-immediate-dispatch.svg)
+
+There is no clock-based eligibility check. A main record can start immediately
+when its lane and capacity permit; retry records additionally need rate
+permission. Waiting behind another execution or a capacity limit is ordinary
+backpressure (B02–B04/B07).
 
 ### ADR 3: Per-job serialization within a topic via keyed partitioning and per-verticle gates
 
@@ -444,6 +458,13 @@ Status values: Accepted, Superseded. Context for all ADRs is [Spec 002](specs/00
 - **Decision:** Produce with key = jobId using Kafka's default partitioner; the owning verticle keeps FIFO queues per jobId and runs one handler per jobId at a time. Different IDs, even in one partition, run concurrently.
 - **Alternatives:** One thread per partition (loses cross-job concurrency); global locks or a lock store (violates ADR 1).
 - **Consequences:** Exclusion holds only under stable ownership; rebalance replay can overlap (see section 8). Partition counts are fixed; the worker validates key/partition agreement.
+
+![ADR 3: A1 and B1 may run concurrently, but A2 waits behind A1 in Job A's lane within the same topic.](docs/diagrams/adr-03-job-lanes.svg)
+
+The lane is keyed by jobId, not executionId: A1 and A2 are separate invocations
+of the same job. Job B can use another permit while Job A is gated. This guarantee
+requires stable topic ownership; it does not fence work from a revoked owner or
+coordinate the main and retry topics (B03/B04/B11/B12).
 
 ### ADR 4: Commit only completed record prefixes
 
@@ -456,11 +477,28 @@ Status values: Accepted, Superseded. Context for all ADRs is [Spec 002](specs/00
 - **Decision:** Keep A for this increment. Option C is a future architecture alternative and conflicts with Spec 002's Kafka-only backlog/no-database constraint; adopting it requires revising that spec and verifying the EDR claim/repair contract before implementation. Kafka can replay unadmitted requests from uncommitted offsets; it does not automatically replay a request after that offset has been committed.
 - **Consequences:** A slow record holds back its partition's commit and counts against the retained-work bound; crashes replay uncommitted work. The B14–B20 worker tests exercise the implemented completion-based path.
 
+![ADR 4: unfinished offset 10 prevents advancement past completed offsets 11 and 12; completing 10 permits next offset 13. Option B is rejected and database-inbox Option C is unimplemented.](docs/diagrams/adr-04-completed-prefix.svg)
+
+Assume the committed next offset starts at 10. Completing records 11 and 12
+cannot advance it while record 10 is unfinished. Once all three complete, 13 is
+a safe commit proposal; only acknowledgment releases their retained entries.
+Other partitions can commit independently, and gaps in delivered offset numbers
+are allowed (B05/B15). The alternative cards are comparisons, not components of
+the implemented Kafka-only system.
+
 ### ADR 5: Acknowledged handoff before source completion; hold the gate until then
 
 - **Status:** Accepted.
 - **Decision:** Mark the source complete only after success or broker acknowledgment of the retry/DLQ publication. On send failure, retry the identical record without rerunning the handler and keep the jobId gate.
 - **Consequences:** No lost work, but duplicate handoffs are possible after crashes. `handoffId` (hash of failed source and attempt) makes duplicates identifiable, not suppressed. Verified by the injected-send-failure case in `KafkaWorkerIT`.
+
+![ADR 5: failed handoff publication retries the same record while retaining the source and gate; broker acknowledgment permits source completion and gate release.](docs/diagrams/adr-05-acknowledged-handoff.svg)
+
+Handler capacity and source completion are separate. When a failed handler has
+actually stopped, another job ID may use its permit, but the same-job successor
+must wait for handoff acknowledgment. Repeating a failed send does not rerun the
+handler or increment its attempt. A crash after publication but before source
+commit can still duplicate the handoff (B06/B08/B09/B16).
 
 ### ADR 6: Independent main and retry topics, groups, and ordering
 
@@ -468,6 +506,13 @@ Status values: Accepted, Superseded. Context for all ADRs is [Spec 002](specs/00
 - **Decision:** Main uses `jobs.main.v1`/`job-main-v1`; retry uses `jobs.retry.v1`/`job-retry-v1`. Retry workers execute jobs directly and never re-enqueue to main. A new main execution may overlap an older retry for the same jobId.
 - **Alternatives:** Cross-topic exclusion (needs shared state; future work).
 - **Consequences:** Relaxed cross-topic ordering is explicit; handlers must tolerate concurrent duplicates.
+
+![ADR 6: after A1 is handed to retry and its main gate is released, main A2 and retry A1 may execute at the same time.](docs/diagrams/adr-06-main-retry-overlap.svg)
+
+The same key creates a lane in each topic, not a shared lock across topics.
+The retry can become visible to its consumer before the main worker receives
+the publication acknowledgment. Main A2 starts only after that acknowledgment
+releases its gate; it need not wait for retry A1 to finish (B06/B07/B12).
 
 ### ADR 7: Retry topic is consumed by a separate worker deployment, not a second verticle in the main worker
 
@@ -482,24 +527,94 @@ Status values: Accepted, Superseded. Context for all ADRs is [Spec 002](specs/00
 - **Alternative (b), not implemented:** Fewer deployables and lower footprint for small installations. It would need a shared per-process capacity budget between the verticles, a decision about whether one `ProcessingWindow` is shared, and a guard against retry work starving main work. Because `KafkaWorker` is role-parameterized and owns its consumer, producer, window, and limiter, hosting both roles in one process would be an additive composition change, not a redesign. It would require a new ADR superseding this one and fresh B14–B20 evidence.
 - **Consequences:** More deployables and configuration; two consumer groups to monitor. Matching partition numbers across the topics still imply no shared ownership (ADR 6).
 
+![ADR 7: main and retry deployments have independent process budgets and replica counts, while replicas within each role share that role's consumer group.](docs/diagrams/adr-07-separate-deployments.svg)
+
+All main replicas join `job-main-v1`; all retry replicas join `job-retry-v1`.
+Each process owns its consumer, processing window, and execution budget. Scaling
+retry replicas increases aggregate retry throughput without changing the main
+budget. Both deployments still depend on shared Kafka infrastructure and may
+call the same downstream targets (B07/B20).
+
 ### ADR 8: Bounded retained work with per-partition pause/resume
 
 - **Status:** Accepted.
 - **Decision:** `ProcessingWindow` caps retained records (1,000) and key/value bytes (16 MiB), reserving headroom for one fetch (two records/2 MiB). Intake pauses at the high watermark and resumes below 50% of both. Reservations release only after the source commit is acknowledged.
 - **Alternatives:** Unbounded buffering; global ReadStream pause (stalls partitions that could progress).
-- **Consequences:** Bounded memory; a stuck handler can pause its partition's intake. Rebalance interaction is not yet verified live.
+- **Consequences:** Retained key/value accounting is bounded per process; a stuck handler can eventually pause all assigned partitions. B14 pressure and B11 rebalance tests exist, but review found that revoked-owner reservations can remain charged indefinitely; repeated-rebalance window recovery is not established by those tests.
+
+![ADR 8: pause when either retained count or bytes reaches its high watermark; resume only when both fall below their low watermarks.](docs/diagrams/adr-08-processing-window.svg)
+
+With the runtime defaults, reserving one fetch of headroom makes the pause
+thresholds 998 records or 14 MiB, below the hard limits of 1,000 records and
+16 MiB. Resume requires fewer than 499 records and less than 7 MiB. This
+hysteresis prevents rapid pause/resume cycling. Queued, running, handoff-pending,
+and completed-but-uncommitted records all retain their reservations; polling
+continues while intake is paused (B14/B15). These byte counts cover retained
+keys and values, not the JVM's entire memory footprint.
 
 ### ADR 9: Adaptive limiter for main; token bucket for retry
 
 - **Status:** Accepted.
 - **Decision:** Main concurrency adapts from five-second latency/failure windows (1–128). Retry uses fixed low concurrency and a one-start-per-second per-pod token bucket.
-- **Consequences:** Protects downstream targets from retry bursts. Runtime behavior of the limiter and rate gate is covered by unit tests; controlled worker-level evidence (B07/B13) is outstanding.
+- **Consequences:** Limits pressure on downstream targets while allowing healthy main traffic to use more capacity. Controlled worker-level B07/B13 tests now exist in `KafkaWorkerIT`; executed results are recorded in the [L06 task record](docs/tasks/L06-backpressure-recovery.md#evaluation). These cases do not establish that every runtime path enforces the policy: review found replacement dispatch can bypass a reduced main limit and timeout signals are not explicitly passed to the limiter.
+
+The diagram shows the **intended policy** from Spec 002 §§7–9. Concurrency limits
+how many handlers run simultaneously; a start-rate limit controls how frequently
+new handlers may begin. A runnable job is the head of its same-job lane with its
+gate available under stable topic ownership.
+
+![ADR 9 intended policy: main handlers require an adaptive concurrency permit; retry handlers require both a concurrency slot and a rate token. Each pod has an independent budget.](docs/diagrams/adr-09-worker-limits.svg)
+
+**Main workers (B13).** The process-wide concurrency limit starts at 16 by default
+and stays between 1 and 128. Evaluate five-second windows with at least 20
+completed attempts, excluding validation and permanent errors:
+
+- Halve the limit, rounding down and clamping to 1, when p95 handler latency
+  exceeds the target (default one second), transient failures reach 10%, or
+  throttling or timeouts occur.
+- Add one permit, up to 128, when backlog exists and performance is healthy with
+  p95 below the target; otherwise hold the limit.
+- Insufficient samples hold the limit, except that an explicit throttle signal
+  can trigger one decrease per window.
+
+A decrease must stop new starts until usage allows; it must not cancel existing
+handlers just to meet the smaller limit. Handler latency excludes queue wait.
+
+**Retry workers (B07).** The defaults are two concurrent handlers and one start
+per second per pod, with burst capacity one. Both concurrency and start rate are
+configurable. Think of the token bucket as storing at most one permission to
+start: a start consumes that permission, and idle time cannot accumulate a burst.
+The current rate gate implements spacing between starts. A handler may begin only
+when both a concurrency slot and rate permission are available. For example, if
+handlers take ten seconds, the first can start at second 0 and the second around
+second 1; a third must wait until one of them stops.
+
+**Independent budgets and completion (B19).** Each pod has its own budget, so
+three retry pods at the defaults can collectively start roughly three handlers
+per second and run six simultaneously. Main and retry workers do not share
+permits or same-job gates; the same jobId may run in both topics concurrently.
+A timeout requests cancellation, but the handler keeps its permit until its
+returned future settles and confirms that work has stopped. On failure, the
+same-job gate and source record remain incomplete until the required retry/DLQ
+handoff is acknowledged, even after the handler permit is released.
+
+Learning check: if both retry slots are occupied, does a newly available token
+allow a third handler to start? **No: both a free slot and a token are required.**
 
 ### ADR 10: Validate raw bytes first; route invalid input to a bounded DLQ
 
 - **Status:** Accepted.
 - **Decision:** Read raw bytes, validate with `EnvelopeValidator` (size, nesting, UUID/UTF-8, unknown fields, key/partition), and publish invalid input to the DLQ as a sanitized code plus a bounded sample.
 - **Consequences:** Malformed data cannot trap deserialization or leak payloads; raw input is never logged.
+
+![ADR 10: raw bytes undergo envelope and routing checks; valid jobs enter dispatch, while invalid records require a bounded DLQ publication and acknowledgment before source completion.](docs/diagrams/adr-10-input-validation.svg)
+
+Byte deserialization lets validation handle malformed JSON rather than trapping
+the consumer in a JSON deserializer. Invalid envelopes use sanitized codes,
+source coordinates, hashes, and at most 256 sample bytes in the DLQ; valid jobs
+rejected for routing preserve their identity and original job. Samples are DLQ
+data, not log output. Neither branch permits a source commit before successful
+handling or the required DLQ acknowledgment (B01/B05/B17).
 
 ---
 

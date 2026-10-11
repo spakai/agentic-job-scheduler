@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="620" viewBox="0 0 1120 620" role="img" aria-labelledby="title description">
+<title id="title">ADR 7: Scale main and retry workers separately</title>
+<desc id="description">Selected deployment: one role per process · Compose demonstrates separately scalable services</desc>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 Z" fill="#52647a"/></marker></defs>
+<style>text {font-family:Arial,Helvetica,sans-serif;fill:#182b43} .heading {font-size:25px;font-weight:700} .label {font-size:19px;font-weight:700} .detail {font-size:17px} .small {font-size:15px;fill:#42556c} .line {fill:none;stroke:#52647a;stroke-width:2;marker-end:url(#arrow)}</style>
+<rect width="1120" height="620" rx="16" fill="white"/>
+<text x="36" y="44" class="heading" text-anchor="start">ADR 7 · Scale main and retry workers separately</text>
+<text x="36" y="75" class="detail" text-anchor="start">Selected deployment: one role per process · Compose demonstrates separately scalable services</text>
+<rect x="36" y="125" width="1048" height="76" rx="12" fill="#f3f5f8" stroke="#bdcbd9"/>
+<text x="560.0" y="156.0" class="label" text-anchor="middle">Shared Kafka broker</text>
+<text x="560.0" y="183.0" class="detail" text-anchor="middle">main / retry / DLQ topics</text>
+<path d="M295 201 V260" class="line"/>
+<text x="373" y="235" class="small" text-anchor="middle">Consume main</text>
+<path d="M825 201 V260" class="line"/>
+<text x="912" y="235" class="small" text-anchor="middle">Consume retry</text>
+<rect x="36" y="263" width="508" height="225" rx="12" fill="#edf5ff" stroke="#bdcbd9"/>
+<rect x="564" y="263" width="520" height="225" rx="12" fill="#eff8f4" stroke="#bdcbd9"/>
+<text x="62" y="299" class="label" text-anchor="start">MAIN deployment · N replicas</text>
+<text x="590" y="299" class="label" text-anchor="start">RETRY deployment · M replicas</text>
+<text x="62" y="338" class="detail" text-anchor="start">One KafkaWorker + consumer per process</text>
+<text x="62" y="370" class="detail" text-anchor="start">Own ProcessingWindow and handler budget</text>
+<text x="62" y="402" class="detail" text-anchor="start">Replicas share the role’s consumer group</text>
+<text x="590" y="338" class="detail" text-anchor="start">One KafkaWorker + consumer per process</text>
+<text x="590" y="370" class="detail" text-anchor="start">Own ProcessingWindow and handler budget</text>
+<text x="590" y="402" class="detail" text-anchor="start">Replicas share the role’s consumer group</text>
+<text x="62" y="451" class="small" text-anchor="start">WORKER_ROLE=main · group job-main-v1</text>
+<text x="590" y="451" class="small" text-anchor="start">WORKER_ROLE=retry · group job-retry-v1</text>
+<rect x="36" y="520" width="1048" height="82" rx="12" fill="#f3f5f8" stroke="#bdcbd9"/>
+<text x="560" y="548" class="detail" text-anchor="middle">The extra retry verticle inside a main process is an unimplemented alternative.</text>
+<text x="560" y="574" class="detail" text-anchor="middle">Process budgets are isolated; the Kafka broker and downstream targets may still be shared.</text>
+</svg>
