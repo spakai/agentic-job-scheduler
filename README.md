@@ -7,12 +7,11 @@ retained-work window and Vert.x pause/resume controller, plus an executable Kafk
 main/retry worker with acknowledged retry/DLQ handoffs and explicit commits.
 Broker evidence covers retry and failed-send recovery, retry-worker
 rate/concurrency limits and attempt progression, bounded malformed/
-oversized/wrong-partition DLQ routing, pause/poll/commit/resume, retry-worker
-rate/concurrency, main adaptive limits, worker pressure, and independent
-partition commits. Compose evidence covers separate main/retry processes,
+oversized/wrong-partition DLQ routing, pause/poll/commit/resume, main adaptive
+limits, worker pressure, independent partition commits, and rebalance/stale
+callback handling. Compose evidence covers separate main/retry processes,
 scaling retry to two replicas, DLQ routing, and replay after Kafka broker restart.
-Remaining B11 rebalance/stale callbacks, B18 sustained outage, and B19 cancellation
-acknowledgment are still in progress.
+Remaining B19 cancellation acknowledgment is still in progress.
 
 See the [arc42 architecture documentation](arch.md) for topic ownership,
 per-job queues, safe commits, the runtime boundary, and ADRs 1–10.

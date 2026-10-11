@@ -53,10 +53,12 @@ public final class KafkaWorker {
     private static final long MAX_RETAINED_BYTES = 16L * 1024 * 1024;
     private static final int MAX_FETCH_RECORDS = 2;
     private static final long MAX_FETCH_BYTES = 2L * 1024 * 1024;
+    private static final long DEFAULT_SHUTDOWN_TIMEOUT_MILLIS = 30_000;
 
     private final Vertx vertx;
     private final WorkerConfig config;
     private final JobHandler handler;
+    private final long shutdownTimeoutMillis;
     private final EnvelopeValidator validator = new EnvelopeValidator(Set.of("demo.echo"));
     private final ProcessingWindow window;
     private final AdaptiveLimiter mainLimiter;
@@ -84,14 +86,24 @@ public final class KafkaWorker {
 
     public KafkaWorker(Vertx vertx, WorkerConfig config, JobHandler handler) {
         this(vertx, config, handler, new ProcessingWindow(
-                MAX_RETAINED_RECORDS, MAX_RETAINED_BYTES, MAX_FETCH_RECORDS, MAX_FETCH_BYTES));
+                MAX_RETAINED_RECORDS, MAX_RETAINED_BYTES, MAX_FETCH_RECORDS, MAX_FETCH_BYTES),
+                DEFAULT_SHUTDOWN_TIMEOUT_MILLIS);
     }
 
     KafkaWorker(Vertx vertx, WorkerConfig config, JobHandler handler, ProcessingWindow window) {
+        this(vertx, config, handler, window, DEFAULT_SHUTDOWN_TIMEOUT_MILLIS);
+    }
+
+    KafkaWorker(Vertx vertx, WorkerConfig config, JobHandler handler, ProcessingWindow window,
+                long shutdownTimeoutMillis) {
         this.vertx = Objects.requireNonNull(vertx, "vertx");
         this.config = Objects.requireNonNull(config, "config");
         this.handler = Objects.requireNonNull(handler, "handler");
         this.window = Objects.requireNonNull(window, "window");
+        if (shutdownTimeoutMillis < 1) {
+            throw new IllegalArgumentException("Shutdown timeout must be positive");
+        }
+        this.shutdownTimeoutMillis = shutdownTimeoutMillis;
         this.mainLimiter = new AdaptiveLimiter(1, 128, config.role() == WorkerRole.MAIN
                 ? config.concurrency() : 16);
         this.retryRateGate = new RateGate(
@@ -168,7 +180,8 @@ public final class KafkaWorker {
                 owners.values().forEach(this::enqueueCommit);
                 maybeFinishClose();
             });
-            shutdownTimerId = vertx.setTimer(30_000, ignoredTimer -> closeClients());
+                shutdownTimerId = vertx.setTimer(shutdownTimeoutMillis,
+                    ignoredTimer -> context.runOnContext(ignoredContext -> closeClients()));
         });
         return closed.future();
     }

@@ -39,16 +39,18 @@ Regression command: `mvn -B -ntp -Dtest=WorkerConfigTest,L04RetryAndLimiterTest 
 Result: passed; 7 unit tests and all 4 KafkaWorkerIT Testcontainers cases,
 0 failures/errors/skips.
 Coverage: a healthy window with backlog raises main concurrency from 4 to 5;
-a slow window with at least 20 completed attempts reduces it to 2, and queued
-work resumes at the reduced cap. The limiter unit test checks that one
+slow windows with at least 20 completed attempts reduce the cap to at most 2
+(successive windows may halve it again to 1), and queued work resumes within
+that cap. The limiter unit test checks that one
 qualifying healthy window increases by one, insufficient windows hold the
 limit, and slow/unstable windows halve it.
 Defect found: the limiter had an extra cumulative 20-window gate on increases,
 despite already receiving the completed-attempt count for each window. Removed
 that gate; the per-window minimum of 20 completed attempts remains enforced.
 The first broker-test attempt observed a new start before a complete slow sample
-window had elapsed. The test now waits across two slow evaluation intervals and
-asserts a later queued start at concurrency 2; it passed. Expected
+window had elapsed. The test now preloads a larger backlog before worker startup,
+waits across slow evaluation intervals, and asserts a later queued start within
+the reduced 1–2 limit. Expected
 RecordTooLargeException warnings in the class-wide run came from the separate
 failed-handoff recovery case and that case passed.
 
@@ -80,6 +82,50 @@ confirmed the Vert.x consumer continued polling while paused and resumed record
 delivery only after commit acknowledgment and reservation release.
 The production worker still uses its default 1,000-record / 16 MiB window; the
 smaller injected limits only make the worker integration scenario practical.
+
+B11 worker rebalance and stale callbacks — 2026-10-11
+Branch: feat/l06-rebalance-stale-callbacks; based on PR #9 merge bffaf8a.
+Focused command: `mvn -B -ntp -Dtest=WorkerConfigTest -Dit.test=KafkaWorkerIT#workerRebalanceIgnoresStaleHandlerAndReplaysOnNewOwner verify`
+Result: passed twice; each run passed 2 unit tests and 1 Testcontainers
+KafkaWorkerIT case, 0 failures/errors/skips.
+Coverage: with two main-group consumers, the new owner replayed a revoked
+partition. Completing the old owner's handler did not start its queued same-job
+successor and did not commit while the new owner remained blocked. The new owner
+then ran both records in order and committed through offset 2.
+Correction: the first test fixture combined initial records and same-job
+successors, so only two of three handler heads started. Splitting delivery into
+an initial active-head phase and a successor phase made the rebalance condition
+deterministic. Cleanup then exposed a real context error: the forced-shutdown
+timer invoked dispatcher owner-context methods off-context. Marshaling that
+callback through the worker's captured context fixed shutdown cleanup.
+
+Full clean L06 verification after B11 — 2026-10-11
+Command: `mvn -B -ntp clean verify`
+Result: passed from a clean target directory; 125 unit tests and 10
+Testcontainers integrations (KafkaWorkerIT: 8, KafkaWorkerCrashIT: 1,
+ProcessingWindowKafkaIT: 1), 0 failures/errors/skips; JAR built.
+Expected `RecordTooLargeException` warnings came from the failed-handoff
+recovery case, which passed.
+
+B18 broker outage and worker recovery — 2026-10-11
+Branch: feat/l06-rebalance-stale-callbacks; based on PR #9 merge bffaf8a.
+Focused command: `mvn -B -ntp -Dtest=WorkerConfigTest -Dit.test=KafkaWorkerIT#workerRecoversCommitsAndPollingAfterKafkaBrokerOutage verify`
+Result: passed twice; each run passed 2 unit tests and 1 Testcontainers
+KafkaWorkerIT case, 0 failures/errors/skips.
+Coverage: the test paused only its task-owned Kafka broker for three seconds
+while a handler was active, completed that handler during the outage, then
+unpaused the broker. The worker committed the retained source record, consumed
+a later record, and committed through offset 2 without rerunning the first
+handler. The pre-existing Compose check separately demonstrates persistent
+broker restart and replay of queued work.
+
+Full clean L06 verification after B18 — 2026-10-11
+Command: `mvn -B -ntp clean verify`
+Result: passed from a clean target directory; 125 unit tests and 11
+Testcontainers integrations (KafkaWorkerIT: 9, KafkaWorkerCrashIT: 1,
+ProcessingWindowKafkaIT: 1), 0 failures/errors/skips; JAR built.
+Expected `RecordTooLargeException` warnings came from the injected failed-send
+recovery test, which passed.
 
 Ordered L06 follow-up — B07 retry worker controls:
 Command: mvn -B -ntp -Dtest=WorkerConfigTest -Dit.test=KafkaWorkerIT verify
