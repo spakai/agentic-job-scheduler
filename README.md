@@ -11,7 +11,8 @@ oversized/wrong-partition DLQ routing, pause/poll/commit/resume, main adaptive
 limits, worker pressure, independent partition commits, and rebalance/stale
 callback handling. Compose evidence covers separate main/retry processes,
 scaling retry to two replicas, DLQ routing, and replay after Kafka broker restart.
-Remaining B19 cancellation acknowledgment is still in progress.
+The B19 cancellation contract keeps the gate and source offset until the handler
+confirms it has stopped; an unconfirmed cancellation remains incomplete.
 
 See the [arc42 architecture documentation](arch.md) for topic ownership,
 per-job queues, safe commits, the runtime boundary, and ADRs 1–10.

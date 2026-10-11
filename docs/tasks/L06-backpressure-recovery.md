@@ -1,6 +1,6 @@
 # L06: Bound retained work and demonstrate recovery
 
-Status: in progress
+Status: ready for review
 
 ## Scope and plan
 
@@ -13,12 +13,11 @@ Status: in progress
   B11 rebalance/stale callbacks; B18 sustained broker outage/recovery. Keep
   each acceptance independently reviewable and record test evidence and any
   remaining gap before starting the next.
-- Current slice plan — B19: clarify the handler cancellation contract before
-  implementing timeout cancellation. The current handler Future has no cancel
-  acknowledgment; preserve the tested shutdown/no-premature-commit behavior and
-  record what additional contract is required to close B19.
-- Base commit and branch: PR #9 merge commit `bffaf8a`; current continuation
-  branch `feat/l06-rebalance-stale-callbacks`.
+- Current slice plan — final verification: run the full clean suite with the
+  B19 timeout/cancellation cases, review the source and evidence diffs, and
+  submit the cancellation contract as its own PR from refreshed `origin/main`.
+- Base commit and branch: PR #10 merge commit `a09a26e`; current continuation
+  branch `feat/l06-handler-cancellation`.
 - Current continuation slice (2026-10-10): complete Spec 002 B14–B20 runtime
   acceptance by wiring the existing library components into runnable main and
   retry workers, adding explicit topic provisioning, a sample producer and
@@ -216,7 +215,7 @@ Status: in progress
   validation passed: 29 selected unit tests, including offset-gap tracker
   cases, and 7 Testcontainers integration tests, 0 failures/errors/skips. B19
   unconfirmed cancellation is next.
-- 2026-10-11 (B19 partial): a worker shutdown test confirms an unresolved
+- 2026-10-11 (B19 initial shutdown evidence, superseded below): a worker shutdown test confirms an unresolved
   handler keeps its same-job successor gated, leaves the source offset
   uncommitted, and keeps shutdown pending. Confirming the handler allows both
   records to complete and commit. The focused check passed (2 unit tests and 1
@@ -224,8 +223,8 @@ Status: in progress
   tests and 9 integrations with no failures/errors/skips. This does not test a
   timeout cancellation acknowledgment: `JobHandler` has no cancellation API,
   and the worker currently waits until its 30-second close timeout before
-  closing clients with unfinished records. B11 rebalance/stale-callback testing
-  is next; B19 remains partially open pending the cancellation contract.
+  closing clients with unfinished records. At that point B19 was partial; the
+  timeout/cancellation contract and its broker tests are recorded below.
 - 2026-10-11 (B11): a two-member Testcontainers rebalance test now proves the
   replacement owner replays the revoked partition, the old handler callback
   neither starts its queued same-job successor nor commits, and the new owner
@@ -242,14 +241,25 @@ Status: in progress
   existing Compose evidence of persistent-volume broker restart and queued-work
   replay, B18 is covered. Full clean verification passed with 125 unit tests and
   11 Testcontainers integrations, 0 failures/errors/skips. B19 is next.
+- 2026-10-11 (B19): added a cooperative cancellation request to `JobExecution`.
+  On the 30-second handler timeout, the worker signals cancellation but keeps
+  the handler permit, same-job gate, and source record incomplete until the
+  handler future confirms that execution has stopped. Confirmed timeout
+  completion then follows normal retry/DLQ handoff; an unconfirmed cancellation
+  is reported as stuck and remains incomplete. Positive and negative broker
+  cases both pass: acknowledged stop produces `HANDLER_TIMEOUT` retry and safe
+  source completion; ignored cancellation keeps the successor gated and offset
+  unset. Focused dispatcher tests (20) and each focused worker case passed.
 
 ## Evaluation
 
 | Check | Commit | Command or workflow | Result | Evidence |
 | --- | --- | --- | --- | --- |
+| Confirmed timeout cancellation (B19) | `829dd1f` | `mvn -B -ntp -Dtest=ImmediateJobDispatcherTest -Dit.test=KafkaWorkerIT#timedOutHandlerRetriesAndReleasesGateOnlyAfterStopConfirmation verify` | passed: 20 unit tests and 1 Testcontainers case | [L06 validation evidence](evidence/L06-validation.txt) |
+| Unconfirmed timeout cancellation (B19) | `829dd1f` | `mvn -B -ntp -Dtest=ImmediateJobDispatcherTest -Dit.test=KafkaWorkerIT#unconfirmedHandlerCancellationKeepsGateAndOffsetIncomplete verify` | passed: 20 unit tests and 1 Testcontainers case; gate retained and source offset unset | [L06 validation evidence](evidence/L06-validation.txt) |
 | Broker outage and worker recovery (B18) | `ddc8ecd` | `mvn -B -ntp -Dtest=WorkerConfigTest -Dit.test=KafkaWorkerIT#workerRecoversCommitsAndPollingAfterKafkaBrokerOutage verify` | passed twice; 2 unit tests and 1 Testcontainers worker integration per run; full suite also passed | [L06 validation evidence](evidence/L06-validation.txt) |
 | Rebalance revocation and stale handler callback (B11) | `ddc8ecd` | `mvn -B -ntp -Dtest=WorkerConfigTest -Dit.test=KafkaWorkerIT#workerRebalanceIgnoresStaleHandlerAndReplaysOnNewOwner verify` | passed twice; 2 unit tests and 1 Testcontainers worker integration per run | [L06 validation evidence](evidence/L06-validation.txt) |
-| Unconfirmed handler during worker shutdown (partial B19) | `6ad2d2e` | `mvn -B -ntp -Dtest=WorkerConfigTest -Dit.test=KafkaWorkerIT#workerShutdownWaitsForUnconfirmedHandlerBeforeCommittingSource verify` | passed: 2 unit tests and 1 Testcontainers worker integration; no early commit; cancellation API remains unimplemented | [L06 validation evidence](evidence/L06-validation.txt) |
+| Initial unconfirmed-handler shutdown boundary (historical B19 evidence) | `6ad2d2e` | `mvn -B -ntp -Dtest=WorkerConfigTest -Dit.test=KafkaWorkerIT#workerShutdownWaitsForUnconfirmedHandlerBeforeCommittingSource verify` | passed: 2 unit tests and 1 Testcontainers worker integration; later superseded by timeout/cancellation tests | [L06 validation evidence](evidence/L06-validation.txt) |
 | Out-of-order prefix and independent partition commits (B15) | `6ad2d2e` | `mvn -B -ntp -Dtest=WorkerConfigTest,L04RetryAndLimiterTest,OffsetCommitTrackerTest,ProcessingWindowTest -Dit.test=KafkaWorkerIT,ProcessingWindowKafkaIT verify` | passed: 29 unit tests and 7 Testcontainers integration tests; 0 failures/errors/skips | [L06 validation evidence](evidence/L06-validation.txt) |
 | Worker bounded-window pressure and pause/resume (B14) | `6ad2d2e` | `mvn -B -ntp -Dtest=ProcessingWindowTest,L04RetryAndLimiterTest -Dit.test=KafkaWorkerIT,ProcessingWindowKafkaIT verify` | passed: 10 unit tests and 6 Testcontainers integration tests; 0 failures/errors/skips | [L06 validation evidence](evidence/L06-validation.txt) |
 | Main adaptive limit (B13) | `6ad2d2e` | `mvn -B -ntp -Dtest=WorkerConfigTest,L04RetryAndLimiterTest -Dit.test=KafkaWorkerIT verify` | passed: 7 unit tests and 4 Testcontainers Kafka worker integration tests; 0 failures/errors/skips | [L06 validation evidence](evidence/L06-validation.txt) |
@@ -262,8 +272,8 @@ Status: in progress
 | Safe-prefix and handoff boundaries (B15/B16) | L06 working tree | `mvn -B -ntp clean verify` | passed in tracker unit tests and worker-level B15 integration; B16 handoff acknowledgment remains covered by KafkaWorkerIT | [L06 validation evidence](evidence/L06-validation.txt) |
 | Worker retry/DLQ handoff, bounded invalid-record DLQ, failed retry-send retention/recovery (B06/B16/B17) | L06 working tree | `mvn -B -ntp clean -Dit.test=KafkaWorkerIT verify` | passed: 123 unit tests and 1 Testcontainers worker integration test; rejected sends logged and recovered, no repeated handler invocation | [L06 validation evidence](evidence/L06-validation.txt) |
 | Compose roles, two retry replicas, bounded DLQ, persistent broker restart and queued main replay (partial B18/B20) | L06 working tree | `docker compose -p l06-worker-runtime up --build --scale retry-worker=2 --detach`; publish/scale/restart/inspect commands recorded in evidence | passed manually; services remain running with named volume preserved | [L06 validation evidence](evidence/L06-validation.txt) |
-| Full B14–B20 runtime acceptance | L06 working tree | `mvn -B -ntp clean verify` plus manual Compose checks | partial: see gaps below; not complete | [L06 validation evidence](evidence/L06-validation.txt) |
-| Full clean build, unit suite, Kafka integration, and package | `ddc8ecd` | `mvn -B -ntp clean verify` | passed: 125 unit tests and 11 Testcontainers integration tests; JAR built | [L06 validation evidence](evidence/L06-validation.txt) |
+| Full B14–B20 runtime acceptance | working tree based on `a09a26e` | `mvn -B -ntp clean verify` plus recorded Compose checks | covered: worker integrations and Compose evidence; full suite passed with 126 unit tests and 13 Testcontainers integrations | [L06 validation evidence](evidence/L06-validation.txt) |
+| Full clean build, unit suite, Kafka integration, and package | `829dd1f` | `mvn -B -ntp clean verify` | passed: 126 unit tests and 13 Testcontainers integration tests; JAR built | [L06 validation evidence](evidence/L06-validation.txt) |
 | Whitespace | L06 working tree | `git diff --check` | passed after source, test, and documentation updates | [L06 validation evidence](evidence/L06-validation.txt) |
 | Editor diagnostics | L06 working tree | VS Code diagnostics for the touched Java source and test files | no errors | current session output |
 | Docker/Testcontainers broker | working tree | `mvn -B -ntp verify` | passed; L06 Kafka container started and cleaned up; pre-existing `spec007-worker` containers untouched | [L06 validation evidence](evidence/L06-validation.txt) |
@@ -275,9 +285,9 @@ retains the window reservation. The worker integration now covers failed retry
 publication and recovery. B11 revocation and stale-handler behavior are covered
 by a real consumer-group rebalance test. B18 is covered by the broker
 pause/recovery test plus the Compose persistent-broker restart and replay
-evidence. Still unverified is timeout cancellation acknowledgment (B19). B19's
-shutdown wait and no-premature-commit boundary is covered, but the handler API
-cannot confirm cancellation. B15 out-of-order prefix and independent-partition
+evidence. B19 now signals timeout cancellation and waits for the handler future
+to confirm stop; tests cover both acknowledged and unconfirmed outcomes. B15
+out-of-order prefix and independent-partition
 commits are covered at worker level; B13 adaptive-limit behavior is covered by
 controlled healthy and slow windows; B14 pressure behavior is covered by the
 worker test together with the pause-while-polling controller test. B09/B20 replay
@@ -313,7 +323,8 @@ during a sustained broker outage.
   verification passed (123 unit, 2 broker integration tests). Compose processed
   jobs, routed malformed data to DLQ, and replayed queued data after persistent
   broker restart. The injected B16 send failure/recovery integration passed.
-  Full B14–B20 acceptance remains open for the specific cases listed above.
+  At that point full B14–B20 acceptance remained open; later B11/B18/B19
+  entries below close those runtime gaps.
 
 - B11 follow-up failure: the first broker test combined initial records with
   same-job successors and only observed two running handler heads before its
@@ -325,31 +336,28 @@ during a sustained broker outage.
 
 ## Handoff and review
 
-- Merged baseline: PR #9 merged to `main` at `bffaf8a`; its Java 21 test/package
-  CI check passed. Commit `ddc8ecd` on `feat/l06-rebalance-stale-callbacks` adds
-  B11/B18 and is pushed. [PR #10](https://github.com/spakai/agentic-job-scheduler/pull/10)
+- Merged baseline: PR #10 merged to `main` at `a09a26e`; its Java 21 test/package
+  CI check passed. Commit `829dd1f` on `feat/l06-handler-cancellation` adds B19
+  and is pushed. [PR #11](https://github.com/spakai/agentic-job-scheduler/pull/11)
   targets `main`; its Java 21 check is in progress. The original local history,
   which contained missing Git objects and could not be pushed, is preserved
   locally as `backup/feat-l06-worker-runtime-corrupt-history`. Unrelated untracked
   `.vscode/settings.json` remains untouched.
 - Completed steps: implemented executable main/retry workers and Compose demo;
-  B07, B11–B15, and B18 worker behavior are covered by broker tests; B19 has
-  partial shutdown/no-premature-commit evidence. A fresh
-  `mvn -B -ntp clean verify` passed on the current working tree with 125 unit
-  tests and 11 Testcontainers
-  integrations; prior evidence records broker
+  B07, B11–B15, B18, and B19 worker behavior are covered by broker tests. A
+  fresh `mvn -B -ntp clean verify` passed on this branch with 126 unit tests and
+  13 Testcontainers integrations; prior evidence records broker
   retry/DLQ, crash/replay, failed-send recovery, and Compose scaling/DLQ/
   persistent broker restart.
-- Next concrete step: clarify the B19 cancellation contract before implementing
-  timeout cancellation, updating
+- Next concrete step: record PR #11 CI and reviewer disposition, updating
   evidence after each actual check, and only close L06 when the acceptance table
   is adequately covered.
-- Open risks/decisions and owner: B19 cancellation semantics remain unverified.
+- Open risks/decisions and owner: review the B19 public cancellation API change.
   No exactly-once, global ordering,
   durable deduplication, or external-effect fencing claim is made.
 - Reviewer findings and disposition: pending.
-- PR / final outcome: L06 remains in progress; PR #9 is merged and PR #10 is
-  open. B11/B18 are covered; B19 cancellation remains open.
+- PR / final outcome: L06 runtime acceptance is ready for review; PRs #9 and #10
+  are merged and PR #11 is open for B19. GH-600 review evidence remains open.
 
 ## Learning check
 

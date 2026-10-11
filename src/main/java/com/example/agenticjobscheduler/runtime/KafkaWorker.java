@@ -2,6 +2,7 @@ package com.example.agenticjobscheduler.runtime;
 
 import com.example.agenticjobscheduler.execution.AdaptiveLimiter;
 import com.example.agenticjobscheduler.execution.FailureClassifier;
+import com.example.agenticjobscheduler.execution.HandlerCancellation;
 import com.example.agenticjobscheduler.execution.ImmediateJobDispatcher;
 import com.example.agenticjobscheduler.execution.JobExecution;
 import com.example.agenticjobscheduler.execution.JobHandler;
@@ -54,11 +55,15 @@ public final class KafkaWorker {
     private static final int MAX_FETCH_RECORDS = 2;
     private static final long MAX_FETCH_BYTES = 2L * 1024 * 1024;
     private static final long DEFAULT_SHUTDOWN_TIMEOUT_MILLIS = 30_000;
+    private static final long DEFAULT_HANDLER_TIMEOUT_MILLIS = 30_000;
+    private static final long DEFAULT_CANCELLATION_REPORT_MILLIS = 5_000;
 
     private final Vertx vertx;
     private final WorkerConfig config;
     private final JobHandler handler;
     private final long shutdownTimeoutMillis;
+    private final long handlerTimeoutMillis;
+    private final long cancellationReportMillis;
     private final EnvelopeValidator validator = new EnvelopeValidator(Set.of("demo.echo"));
     private final ProcessingWindow window;
     private final AdaptiveLimiter mainLimiter;
@@ -87,7 +92,8 @@ public final class KafkaWorker {
     public KafkaWorker(Vertx vertx, WorkerConfig config, JobHandler handler) {
         this(vertx, config, handler, new ProcessingWindow(
                 MAX_RETAINED_RECORDS, MAX_RETAINED_BYTES, MAX_FETCH_RECORDS, MAX_FETCH_BYTES),
-                DEFAULT_SHUTDOWN_TIMEOUT_MILLIS);
+            DEFAULT_SHUTDOWN_TIMEOUT_MILLIS, DEFAULT_HANDLER_TIMEOUT_MILLIS,
+            DEFAULT_CANCELLATION_REPORT_MILLIS);
     }
 
     KafkaWorker(Vertx vertx, WorkerConfig config, JobHandler handler, ProcessingWindow window) {
@@ -96,14 +102,22 @@ public final class KafkaWorker {
 
     KafkaWorker(Vertx vertx, WorkerConfig config, JobHandler handler, ProcessingWindow window,
                 long shutdownTimeoutMillis) {
+        this(vertx, config, handler, window, shutdownTimeoutMillis,
+                DEFAULT_HANDLER_TIMEOUT_MILLIS, DEFAULT_CANCELLATION_REPORT_MILLIS);
+    }
+
+    KafkaWorker(Vertx vertx, WorkerConfig config, JobHandler handler, ProcessingWindow window,
+                long shutdownTimeoutMillis, long handlerTimeoutMillis, long cancellationReportMillis) {
         this.vertx = Objects.requireNonNull(vertx, "vertx");
         this.config = Objects.requireNonNull(config, "config");
         this.handler = Objects.requireNonNull(handler, "handler");
         this.window = Objects.requireNonNull(window, "window");
-        if (shutdownTimeoutMillis < 1) {
-            throw new IllegalArgumentException("Shutdown timeout must be positive");
+        if (shutdownTimeoutMillis < 1 || handlerTimeoutMillis < 1 || cancellationReportMillis < 1) {
+            throw new IllegalArgumentException("Worker timeouts must be positive");
         }
         this.shutdownTimeoutMillis = shutdownTimeoutMillis;
+        this.handlerTimeoutMillis = handlerTimeoutMillis;
+        this.cancellationReportMillis = cancellationReportMillis;
         this.mainLimiter = new AdaptiveLimiter(1, 128, config.role() == WorkerRole.MAIN
                 ? config.concurrency() : 16);
         this.retryRateGate = new RateGate(
@@ -347,7 +361,7 @@ public final class KafkaWorker {
             if (record.partition() != expectedPartition) {
                 throw new InvalidRoutingException(job, attempt, originalSource);
             }
-            JobExecution execution = new JobExecution(source, job, attempt);
+            JobExecution execution = new JobExecution(source, job, attempt, new HandlerCancellation());
             ImmediateJobDispatcher.Submission submission = owner.dispatcher.submit(execution);
             submission.handlerStopped().onComplete(stopped -> {
                 if (stopped.failed()) {
@@ -388,7 +402,8 @@ public final class KafkaWorker {
         FailureClassifier.FailureType failureType = FailureClassifier.classify(execution.attempt(),
                 execution.job().maxAttempts(), failure);
         boolean retryable = failureType == FailureClassifier.FailureType.RETRYABLE;
-        String errorCode = failureType == FailureClassifier.FailureType.PERMANENT
+        String errorCode = failure instanceof HandlerTimeoutException ? "HANDLER_TIMEOUT"
+            : failureType == FailureClassifier.FailureType.PERMANENT
                 ? "PERMANENT_HANDLER_FAILURE" : "HANDLER_FAILURE";
         if (failureType == FailureClassifier.FailureType.EXHAUSTED) {
             errorCode = "ATTEMPTS_EXHAUSTED";
@@ -559,13 +574,7 @@ public final class KafkaWorker {
 
     private Future<Void> executeHandler(JobExecution execution) {
         long startedAt = System.nanoTime();
-        Supplier<Future<Void>> operation = () -> {
-            try {
-                return handler.execute(execution);
-            } catch (RuntimeException failure) {
-                return Future.failedFuture(failure);
-            }
-        };
+        Supplier<Future<Void>> operation = () -> executeHandlerWithTimeout(execution);
         Future<Void> outcome = config.role() == WorkerRole.RETRY
                 ? retryRateGate.submit(operation) : operation.get();
         if (outcome != null) {
@@ -582,6 +591,54 @@ public final class KafkaWorker {
             }));
         }
         return outcome;
+    }
+
+    private Future<Void> executeHandlerWithTimeout(JobExecution execution) {
+        Future<Void> handlerCompletion;
+        try {
+            handlerCompletion = handler.execute(execution);
+        } catch (RuntimeException failure) {
+            return Future.failedFuture(failure);
+        }
+        if (handlerCompletion == null) {
+            return null;
+        }
+
+        Promise<Void> settled = Promise.promise();
+        boolean[] timedOut = {false};
+        long[] cancellationReportTimer = {-1};
+        long timeoutTimer = vertx.setTimer(handlerTimeoutMillis, ignored ->
+                context.runOnContext(ignoredContext -> {
+                    if (handlerCompletion.isComplete() || settled.future().isComplete()) {
+                        return;
+                    }
+                    timedOut[0] = true;
+                    execution.cancellation().requestCancellation();
+                    LOG.log(Level.WARNING, "Handler timed out; cancellation requested for job {0}",
+                            execution.job().jobId());
+                    cancellationReportTimer[0] = vertx.setTimer(cancellationReportMillis,
+                            ignoredGrace -> context.runOnContext(graceContext -> {
+                                if (!handlerCompletion.isComplete()) {
+                                    LOG.log(Level.SEVERE,
+                                            "Handler cancellation is unconfirmed; retaining job gate and source record for {0}",
+                                            execution.job().jobId());
+                                }
+                            }));
+                }));
+        handlerCompletion.onComplete(result -> context.runOnContext(ignoredContext -> {
+            vertx.cancelTimer(timeoutTimer);
+            if (cancellationReportTimer[0] != -1) {
+                vertx.cancelTimer(cancellationReportTimer[0]);
+            }
+            if (timedOut[0]) {
+                settled.tryFail(new HandlerTimeoutException());
+            } else if (result.succeeded()) {
+                settled.tryComplete();
+            } else {
+                settled.tryFail(result.cause());
+            }
+        }));
+        return settled.future();
     }
 
     private static long batchBytes(KafkaConsumerRecords<byte[], byte[]> batch) {
@@ -701,6 +758,12 @@ public final class KafkaWorker {
             this.job = job;
             this.attempt = attempt;
             this.originalSource = originalSource;
+        }
+    }
+
+    private static final class HandlerTimeoutException extends RuntimeException {
+        private HandlerTimeoutException() {
+            super("HANDLER_TIMEOUT");
         }
     }
 
