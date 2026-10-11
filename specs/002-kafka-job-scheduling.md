@@ -1,6 +1,6 @@
 # Spec 002: Immediate Kafka job processing with slower retries
 
-Status: **Draft — Kafka main/retry worker runtime and Compose demo implemented; B06/B07/B08/B09/B13/B14/B15/B16/B17/B20 have test or demo evidence; sustained-outage B18, B19, worker-level B11, and GH-600 review evidence remain in progress**
+Status: **Draft — Kafka main/retry worker runtime and Compose demo implemented; B06/B07/B08/B09/B11/B13/B14/B15/B16/B17/B18/B20 have test or demo evidence; B19 and GH-600 review evidence remain in progress**
 
 Project: `agentic-job-scheduler`
 Date: 2026-10-08
@@ -317,8 +317,11 @@ unchanged without rerunning the handler before successful recovery. Compose
 evidence covers separate main/retry processes, two retry replicas, DLQ routing,
 persistent Kafka storage, and queued work after broker restart.
 
-Remaining worker acceptance is B11 rebalance ownership/stale callbacks, B18
-sustained broker outage, and B19 cancellation acknowledgment. B19 has partial
+Remaining worker acceptance is B19 cancellation acknowledgment. B11 revocation
+and stale handler behavior are covered by a real two-member consumer-group
+rebalance test. B18 recovery is covered by a three-second Testcontainers broker
+pause while a handler completion is pending, followed by commit and polling
+recovery; Compose separately covers broker restart and queued-work replay. B19 has partial
 shutdown evidence: unresolved handler work keeps the source offset incomplete
 until its future confirms completion, but `JobHandler` currently has no
 cancellation-acknowledgment API. B14 pressure and B15 safe-prefix/independent
