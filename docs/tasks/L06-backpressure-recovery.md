@@ -1,6 +1,6 @@
 # L06: Bound retained work and demonstrate recovery
 
-Status: in progress
+Status: ready for review
 
 ## Scope and plan
 
@@ -255,8 +255,8 @@ Status: in progress
 
 | Check | Commit | Command or workflow | Result | Evidence |
 | --- | --- | --- | --- | --- |
-| Confirmed timeout cancellation (B19) | working tree based on `a09a26e` | `mvn -B -ntp -Dtest=ImmediateJobDispatcherTest -Dit.test=KafkaWorkerIT#timedOutHandlerRetriesAndReleasesGateOnlyAfterStopConfirmation verify` | passed: 20 unit tests and 1 Testcontainers case | [L06 validation evidence](evidence/L06-validation.txt) |
-| Unconfirmed timeout cancellation (B19) | working tree based on `a09a26e` | `mvn -B -ntp -Dtest=ImmediateJobDispatcherTest -Dit.test=KafkaWorkerIT#unconfirmedHandlerCancellationKeepsGateAndOffsetIncomplete verify` | passed: 20 unit tests and 1 Testcontainers case; gate retained and source offset unset | [L06 validation evidence](evidence/L06-validation.txt) |
+| Confirmed timeout cancellation (B19) | `829dd1f` | `mvn -B -ntp -Dtest=ImmediateJobDispatcherTest -Dit.test=KafkaWorkerIT#timedOutHandlerRetriesAndReleasesGateOnlyAfterStopConfirmation verify` | passed: 20 unit tests and 1 Testcontainers case | [L06 validation evidence](evidence/L06-validation.txt) |
+| Unconfirmed timeout cancellation (B19) | `829dd1f` | `mvn -B -ntp -Dtest=ImmediateJobDispatcherTest -Dit.test=KafkaWorkerIT#unconfirmedHandlerCancellationKeepsGateAndOffsetIncomplete verify` | passed: 20 unit tests and 1 Testcontainers case; gate retained and source offset unset | [L06 validation evidence](evidence/L06-validation.txt) |
 | Broker outage and worker recovery (B18) | `ddc8ecd` | `mvn -B -ntp -Dtest=WorkerConfigTest -Dit.test=KafkaWorkerIT#workerRecoversCommitsAndPollingAfterKafkaBrokerOutage verify` | passed twice; 2 unit tests and 1 Testcontainers worker integration per run; full suite also passed | [L06 validation evidence](evidence/L06-validation.txt) |
 | Rebalance revocation and stale handler callback (B11) | `ddc8ecd` | `mvn -B -ntp -Dtest=WorkerConfigTest -Dit.test=KafkaWorkerIT#workerRebalanceIgnoresStaleHandlerAndReplaysOnNewOwner verify` | passed twice; 2 unit tests and 1 Testcontainers worker integration per run | [L06 validation evidence](evidence/L06-validation.txt) |
 | Initial unconfirmed-handler shutdown boundary (historical B19 evidence) | `6ad2d2e` | `mvn -B -ntp -Dtest=WorkerConfigTest -Dit.test=KafkaWorkerIT#workerShutdownWaitsForUnconfirmedHandlerBeforeCommittingSource verify` | passed: 2 unit tests and 1 Testcontainers worker integration; later superseded by timeout/cancellation tests | [L06 validation evidence](evidence/L06-validation.txt) |
@@ -273,7 +273,7 @@ Status: in progress
 | Worker retry/DLQ handoff, bounded invalid-record DLQ, failed retry-send retention/recovery (B06/B16/B17) | L06 working tree | `mvn -B -ntp clean -Dit.test=KafkaWorkerIT verify` | passed: 123 unit tests and 1 Testcontainers worker integration test; rejected sends logged and recovered, no repeated handler invocation | [L06 validation evidence](evidence/L06-validation.txt) |
 | Compose roles, two retry replicas, bounded DLQ, persistent broker restart and queued main replay (partial B18/B20) | L06 working tree | `docker compose -p l06-worker-runtime up --build --scale retry-worker=2 --detach`; publish/scale/restart/inspect commands recorded in evidence | passed manually; services remain running with named volume preserved | [L06 validation evidence](evidence/L06-validation.txt) |
 | Full B14–B20 runtime acceptance | working tree based on `a09a26e` | `mvn -B -ntp clean verify` plus recorded Compose checks | covered: worker integrations and Compose evidence; full suite passed with 126 unit tests and 13 Testcontainers integrations | [L06 validation evidence](evidence/L06-validation.txt) |
-| Full clean build, unit suite, Kafka integration, and package | working tree based on `a09a26e` | `mvn -B -ntp clean verify` | passed: 126 unit tests and 13 Testcontainers integration tests; JAR built | [L06 validation evidence](evidence/L06-validation.txt) |
+| Full clean build, unit suite, Kafka integration, and package | `829dd1f` | `mvn -B -ntp clean verify` | passed: 126 unit tests and 13 Testcontainers integration tests; JAR built | [L06 validation evidence](evidence/L06-validation.txt) |
 | Whitespace | L06 working tree | `git diff --check` | passed after source, test, and documentation updates | [L06 validation evidence](evidence/L06-validation.txt) |
 | Editor diagnostics | L06 working tree | VS Code diagnostics for the touched Java source and test files | no errors | current session output |
 | Docker/Testcontainers broker | working tree | `mvn -B -ntp verify` | passed; L06 Kafka container started and cleaned up; pre-existing `spec007-worker` containers untouched | [L06 validation evidence](evidence/L06-validation.txt) |
@@ -337,8 +337,9 @@ during a sustained broker outage.
 ## Handoff and review
 
 - Merged baseline: PR #10 merged to `main` at `a09a26e`; its Java 21 test/package
-  CI check passed. Current B19 work is on `feat/l06-handler-cancellation`, based
-  on that merge. The original local history,
+  CI check passed. Commit `829dd1f` on `feat/l06-handler-cancellation` adds B19
+  and is pushed. [PR #11](https://github.com/spakai/agentic-job-scheduler/pull/11)
+  targets `main`; its Java 21 check is in progress. The original local history,
   which contained missing Git objects and could not be pushed, is preserved
   locally as `backup/feat-l06-worker-runtime-corrupt-history`. Unrelated untracked
   `.vscode/settings.json` remains untouched.
@@ -348,16 +349,15 @@ during a sustained broker outage.
   13 Testcontainers integrations; prior evidence records broker
   retry/DLQ, crash/replay, failed-send recovery, and Compose scaling/DLQ/
   persistent broker restart.
-- Next concrete step: commit and submit the B19 cancellation changes for review,
-  then record PR CI and reviewer disposition, updating
+- Next concrete step: record PR #11 CI and reviewer disposition, updating
   evidence after each actual check, and only close L06 when the acceptance table
   is adequately covered.
 - Open risks/decisions and owner: review the B19 public cancellation API change.
   No exactly-once, global ordering,
   durable deduplication, or external-effect fencing claim is made.
 - Reviewer findings and disposition: pending.
-- PR / final outcome: L06 remains in progress; PRs #9 and #10 are merged. B19
-  implementation is pending full verification and PR review.
+- PR / final outcome: L06 runtime acceptance is ready for review; PRs #9 and #10
+  are merged and PR #11 is open for B19. GH-600 review evidence remains open.
 
 ## Learning check
 

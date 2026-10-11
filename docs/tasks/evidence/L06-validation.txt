@@ -1,7 +1,7 @@
 L06 backpressure/recovery evidence — 2026-10-10
 
 B19 handler timeout and cancellation confirmation — 2026-10-11
-Branch: feat/l06-handler-cancellation; based on PR #10 merge a09a26e.
+Branch: feat/l06-handler-cancellation; commit 829dd1f, based on PR #10 merge a09a26e.
 Confirmed command: `mvn -B -ntp -Dtest=ImmediateJobDispatcherTest -Dit.test=KafkaWorkerIT#timedOutHandlerRetriesAndReleasesGateOnlyAfterStopConfirmation verify`
 Unconfirmed command: `mvn -B -ntp -Dtest=ImmediateJobDispatcherTest -Dit.test=KafkaWorkerIT#unconfirmedHandlerCancellationKeepsGateAndOffsetIncomplete verify`
 Result: both passed; each ran 20 dispatcher unit tests and 1 Testcontainers
@@ -27,7 +27,12 @@ Testcontainers integrations (KafkaWorkerIT: 11, KafkaWorkerCrashIT: 1,
 ProcessingWindowKafkaIT: 1), 0 failures/errors/skips; JAR built.
 Expected warnings include the deliberate unconfirmed-cancellation stuck report
 and the failed-handoff `RecordTooLargeException` injection; all related tests
-passed. This run validates the current B19 implementation and test tree.
+passed. This run validates the implementation and test tree committed as 829dd1f.
+
+GitHub CI — PR #11
+PR: https://github.com/spakai/agentic-job-scheduler/pull/11
+Check: Java 21 test and package.
+Status when recorded: in progress.
 
 Earlier B19 shutdown boundary — 2026-10-11 (superseded by timeout tests above)
 Branch: feat/l06-worker-runtime; implementation committed as 6ad2d2e.
