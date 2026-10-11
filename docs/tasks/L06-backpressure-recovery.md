@@ -232,10 +232,10 @@ Status: in progress
 
 | Check | Commit | Command or workflow | Result | Evidence |
 | --- | --- | --- | --- | --- |
-| Unconfirmed handler during worker shutdown (partial B19) | working tree based on `94f5550` | `mvn -B -ntp -Dtest=WorkerConfigTest -Dit.test=KafkaWorkerIT#workerShutdownWaitsForUnconfirmedHandlerBeforeCommittingSource verify` | passed: 2 unit tests and 1 Testcontainers worker integration; no early commit; cancellation API remains unimplemented | [L06 validation evidence](evidence/L06-validation.txt) |
-| Out-of-order prefix and independent partition commits (B15) | working tree based on `94f5550` | `mvn -B -ntp -Dtest=WorkerConfigTest,L04RetryAndLimiterTest,OffsetCommitTrackerTest,ProcessingWindowTest -Dit.test=KafkaWorkerIT,ProcessingWindowKafkaIT verify` | passed: 29 unit tests and 7 Testcontainers integration tests; 0 failures/errors/skips | [L06 validation evidence](evidence/L06-validation.txt) |
-| Worker bounded-window pressure and pause/resume (B14) | working tree based on `94f5550` | `mvn -B -ntp -Dtest=ProcessingWindowTest,L04RetryAndLimiterTest -Dit.test=KafkaWorkerIT,ProcessingWindowKafkaIT verify` | passed: 10 unit tests and 6 Testcontainers integration tests; 0 failures/errors/skips | [L06 validation evidence](evidence/L06-validation.txt) |
-| Main adaptive limit (B13) | working tree based on `94f5550` | `mvn -B -ntp -Dtest=WorkerConfigTest,L04RetryAndLimiterTest -Dit.test=KafkaWorkerIT verify` | passed: 7 unit tests and 4 Testcontainers Kafka worker integration tests; 0 failures/errors/skips | [L06 validation evidence](evidence/L06-validation.txt) |
+| Unconfirmed handler during worker shutdown (partial B19) | `6ad2d2e` | `mvn -B -ntp -Dtest=WorkerConfigTest -Dit.test=KafkaWorkerIT#workerShutdownWaitsForUnconfirmedHandlerBeforeCommittingSource verify` | passed: 2 unit tests and 1 Testcontainers worker integration; no early commit; cancellation API remains unimplemented | [L06 validation evidence](evidence/L06-validation.txt) |
+| Out-of-order prefix and independent partition commits (B15) | `6ad2d2e` | `mvn -B -ntp -Dtest=WorkerConfigTest,L04RetryAndLimiterTest,OffsetCommitTrackerTest,ProcessingWindowTest -Dit.test=KafkaWorkerIT,ProcessingWindowKafkaIT verify` | passed: 29 unit tests and 7 Testcontainers integration tests; 0 failures/errors/skips | [L06 validation evidence](evidence/L06-validation.txt) |
+| Worker bounded-window pressure and pause/resume (B14) | `6ad2d2e` | `mvn -B -ntp -Dtest=ProcessingWindowTest,L04RetryAndLimiterTest -Dit.test=KafkaWorkerIT,ProcessingWindowKafkaIT verify` | passed: 10 unit tests and 6 Testcontainers integration tests; 0 failures/errors/skips | [L06 validation evidence](evidence/L06-validation.txt) |
+| Main adaptive limit (B13) | `6ad2d2e` | `mvn -B -ntp -Dtest=WorkerConfigTest,L04RetryAndLimiterTest -Dit.test=KafkaWorkerIT verify` | passed: 7 unit tests and 4 Testcontainers Kafka worker integration tests; 0 failures/errors/skips | [L06 validation evidence](evidence/L06-validation.txt) |
 | Retry rate/concurrency and attempt progression (B07) | working tree | `mvn -B -ntp -Dtest=WorkerConfigTest -Dit.test=KafkaWorkerIT verify` | passed: 2 unit tests and 3 Testcontainers Kafka worker integration tests; 0 failures/errors/skips | current session output, 2026-10-10 |
 | Fresh health check of pushed feature snapshot | `7e9e7d0` | `mvn -B -ntp clean verify` | passed: 123 unit tests and 4 Testcontainers integration tests; 0 failures/errors/skips; JAR built | current session output; [L06 validation evidence](evidence/L06-validation.txt) |
 | Merged L05 baseline | `8476630` | `mvn -B -ntp clean test` | passed: 115 tests, 0 failures/errors/skips | session output; retain final L06 evidence |
@@ -246,7 +246,7 @@ Status: in progress
 | Worker retry/DLQ handoff, bounded invalid-record DLQ, failed retry-send retention/recovery (B06/B16/B17) | L06 working tree | `mvn -B -ntp clean -Dit.test=KafkaWorkerIT verify` | passed: 123 unit tests and 1 Testcontainers worker integration test; rejected sends logged and recovered, no repeated handler invocation | [L06 validation evidence](evidence/L06-validation.txt) |
 | Compose roles, two retry replicas, bounded DLQ, persistent broker restart and queued main replay (partial B18/B20) | L06 working tree | `docker compose -p l06-worker-runtime up --build --scale retry-worker=2 --detach`; publish/scale/restart/inspect commands recorded in evidence | passed manually; services remain running with named volume preserved | [L06 validation evidence](evidence/L06-validation.txt) |
 | Full B14–B20 runtime acceptance | L06 working tree | `mvn -B -ntp clean verify` plus manual Compose checks | partial: see gaps below; not complete | [L06 validation evidence](evidence/L06-validation.txt) |
-| Full clean build, unit suite, Kafka integration, and package | working tree based on `94f5550` | `mvn -B -ntp clean verify` | passed: 125 unit tests and 9 Testcontainers integration tests; JAR built | [L06 validation evidence](evidence/L06-validation.txt) |
+| Full clean build, unit suite, Kafka integration, and package | `6ad2d2e` | `mvn -B -ntp clean verify` | passed: 125 unit tests and 9 Testcontainers integration tests; JAR built | [L06 validation evidence](evidence/L06-validation.txt) |
 | Whitespace | L06 working tree | `git diff --check` | passed after source, test, and documentation updates | [L06 validation evidence](evidence/L06-validation.txt) |
 | Editor diagnostics | L06 working tree | VS Code diagnostics for the touched Java source and test files | no errors | current session output |
 | Docker/Testcontainers broker | working tree | `mvn -B -ntp verify` | passed; L06 Kafka container started and cleaned up; pre-existing `spec007-worker` containers untouched | [L06 validation evidence](evidence/L06-validation.txt) |
@@ -298,12 +298,14 @@ during a sustained broker outage.
 
 ## Handoff and review
 
-- Latest verified commit: `94f5550` on `feat/l06-worker-runtime`; the feature
-  snapshot is pushed to `origin/feat/l06-worker-runtime`. Its committed tree
-  matches the original feature snapshot. The original local history, which
+- Latest code/test commit: `6ad2d2e` on `feat/l06-worker-runtime`, pushed to
+  `origin/feat/l06-worker-runtime`. The branch has an open
+  [PR #9](https://github.com/spakai/agentic-job-scheduler/pull/9) targeting
+  `main`; its Java 21 test/package CI check passed. The original local history, which
   contained missing Git objects and could not be pushed, is preserved locally
-  as `backup/feat-l06-worker-runtime-corrupt-history`. The current source, test,
-  and documentation changes are pending commit. Unrelated untracked
+  as `backup/feat-l06-worker-runtime-corrupt-history`. The L06 implementation,
+  tests, and acceptance evidence are committed. This handoff update is pending
+  its follow-up documentation commit. Unrelated untracked
   `.vscode/settings.json` remains untouched.
 - Completed steps: implemented executable main/retry workers and Compose demo;
   B07 retry controls and B13–B15 worker behavior are covered by focused broker
@@ -320,7 +322,8 @@ during a sustained broker outage.
   cancellation semantics remain unverified. No exactly-once, global ordering,
   durable deduplication, or external-effect fencing claim is made.
 - Reviewer findings and disposition: pending.
-- PR / final outcome: L06 remains in progress; no commit or PR created.
+- PR / final outcome: L06 remains in progress; PR #9 is open, with B11, B18,
+  and the B19 cancellation contract still outstanding.
 
 ## Learning check
 
