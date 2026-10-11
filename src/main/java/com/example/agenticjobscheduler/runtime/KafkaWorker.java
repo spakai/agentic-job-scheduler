@@ -35,7 +35,6 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.TreeMap;
-import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Supplier;
 import java.util.logging.Level;
@@ -59,8 +58,7 @@ public final class KafkaWorker {
     private final WorkerConfig config;
     private final JobHandler handler;
     private final EnvelopeValidator validator = new EnvelopeValidator(Set.of("demo.echo"));
-    private final ProcessingWindow window = new ProcessingWindow(
-            MAX_RETAINED_RECORDS, MAX_RETAINED_BYTES, MAX_FETCH_RECORDS, MAX_FETCH_BYTES);
+    private final ProcessingWindow window;
     private final AdaptiveLimiter mainLimiter;
     private final ArrayDeque<CommitRequest> commitQueue = new ArrayDeque<>();
     private final Map<TopicPartition, PartitionOwner> owners = new HashMap<>();
@@ -85,12 +83,19 @@ public final class KafkaWorker {
     private int failedAttempts;
 
     public KafkaWorker(Vertx vertx, WorkerConfig config, JobHandler handler) {
+        this(vertx, config, handler, new ProcessingWindow(
+                MAX_RETAINED_RECORDS, MAX_RETAINED_BYTES, MAX_FETCH_RECORDS, MAX_FETCH_BYTES));
+    }
+
+    KafkaWorker(Vertx vertx, WorkerConfig config, JobHandler handler, ProcessingWindow window) {
         this.vertx = Objects.requireNonNull(vertx, "vertx");
         this.config = Objects.requireNonNull(config, "config");
         this.handler = Objects.requireNonNull(handler, "handler");
+        this.window = Objects.requireNonNull(window, "window");
         this.mainLimiter = new AdaptiveLimiter(1, 128, config.role() == WorkerRole.MAIN
                 ? config.concurrency() : 16);
-        this.retryRateGate = new RateGate(vertx, 1_000, config.concurrency());
+        this.retryRateGate = new RateGate(
+                vertx, config.retryStartsPerSecond(), config.concurrency());
     }
 
     public synchronized Future<Void> start() {
@@ -688,15 +693,15 @@ public final class KafkaWorker {
 
     private static final class RateGate {
         private final Vertx vertx;
-        private final long intervalMillis;
+        private final long intervalNanos;
         private final int queueLimit;
         private final ArrayDeque<RateRequest> waiting = new ArrayDeque<>();
         private boolean timerScheduled;
         private long lastStartNanos;
 
-        private RateGate(Vertx vertx, long intervalMillis, int queueLimit) {
+        private RateGate(Vertx vertx, int startsPerSecond, int queueLimit) {
             this.vertx = vertx;
-            this.intervalMillis = intervalMillis;
+            this.intervalNanos = Math.max(1L, TimeUnit.SECONDS.toNanos(1) / startsPerSecond);
             this.queueLimit = queueLimit;
         }
 
@@ -714,7 +719,6 @@ public final class KafkaWorker {
             if (timerScheduled || waiting.isEmpty()) {
                 return;
             }
-            long intervalNanos = TimeUnit.MILLISECONDS.toNanos(intervalMillis);
             long elapsedNanos = System.nanoTime() - lastStartNanos;
             long remainingNanos = lastStartNanos == 0
                     ? 0 : Math.max(0, intervalNanos - elapsedNanos);

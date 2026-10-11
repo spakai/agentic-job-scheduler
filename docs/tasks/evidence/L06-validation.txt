@@ -1,5 +1,91 @@
 L06 backpressure/recovery evidence — 2026-10-10
 
+B19 partial shutdown boundary — 2026-10-11
+Branch: feat/l06-worker-runtime; working tree based on 94f5550.
+Command: `mvn -B -ntp -Dtest=WorkerConfigTest -Dit.test=KafkaWorkerIT#workerShutdownWaitsForUnconfirmedHandlerBeforeCommittingSource verify`
+Result: passed; 2 unit tests and 1 Testcontainers KafkaWorkerIT case,
+0 failures/errors/skips.
+Coverage: while the first same-job handler future was unresolved, calling
+`KafkaWorker.close()` left shutdown pending, did not start the queued second
+record, and left the source group offset unset. After the handler future was
+confirmed, the second record ran and the source committed through offset 2.
+Gap: this proves no completion is manufactured while work is unconfirmed, but
+does not exercise a handler cancellation acknowledgment. `JobHandler` has no
+cancellation API; the worker's forced close path occurs after its 30-second
+shutdown timer and closes clients without committing the unfinished record.
+B19 remains partially open pending a cancellation contract/test.
+
+Full clean L06 verification — 2026-10-11
+Command: `mvn -B -ntp clean verify`
+Result: passed from a clean target directory; 125 unit tests and 9
+Testcontainers integrations (KafkaWorkerIT: 7, KafkaWorkerCrashIT: 1,
+ProcessingWindowKafkaIT: 1), 0 failures/errors/skips; JAR built.
+Expected `RecordTooLargeException` warnings came from the failed-handoff
+recovery case; the test passed and verified recovery without rerunning the
+handler. This run used the working tree based on commit 94f5550.
+
+B13 main adaptive limiter — 2026-10-11
+Branch: feat/l06-worker-runtime; working tree based on 94f5550.
+Focused command: `mvn -B -ntp -Dtest=L04RetryAndLimiterTest -Dit.test=KafkaWorkerIT#mainWorkerAdaptsConcurrencyFromMeasuredHandlerWindows verify`
+Result: passed; 5 limiter unit tests and 1 Testcontainers KafkaWorkerIT case,
+0 failures/errors/skips.
+Regression command: `mvn -B -ntp -Dtest=WorkerConfigTest,L04RetryAndLimiterTest -Dit.test=KafkaWorkerIT verify`
+Result: passed; 7 unit tests and all 4 KafkaWorkerIT Testcontainers cases,
+0 failures/errors/skips.
+Coverage: a healthy window with backlog raises main concurrency from 4 to 5;
+a slow window with at least 20 completed attempts reduces it to 2, and queued
+work resumes at the reduced cap. The limiter unit test checks that one
+qualifying healthy window increases by one, insufficient windows hold the
+limit, and slow/unstable windows halve it.
+Defect found: the limiter had an extra cumulative 20-window gate on increases,
+despite already receiving the completed-attempt count for each window. Removed
+that gate; the per-window minimum of 20 completed attempts remains enforced.
+The first broker-test attempt observed a new start before a complete slow sample
+window had elapsed. The test now waits across two slow evaluation intervals and
+asserts a later queued start at concurrency 2; it passed. Expected
+RecordTooLargeException warnings in the class-wide run came from the separate
+failed-handoff recovery case and that case passed.
+
+B15 independent partition commits — 2026-10-11
+Branch: feat/l06-worker-runtime; working tree based on 94f5550.
+Focused command: `mvn -B -ntp -Dtest=OffsetCommitTrackerTest -Dit.test=KafkaWorkerIT#mainWorkerCommitsIndependentPartitionWhileEarlierOffsetIsRunning verify`
+Result: passed; 17 offset tracker unit tests and 1 Testcontainers KafkaWorkerIT
+case, 0 failures/errors/skips.
+Regression command: `mvn -B -ntp -Dtest=WorkerConfigTest,L04RetryAndLimiterTest,OffsetCommitTrackerTest,ProcessingWindowTest -Dit.test=KafkaWorkerIT,ProcessingWindowKafkaIT verify`
+Result: passed; 29 selected unit tests and 7 Testcontainers integration tests,
+0 failures/errors/skips.
+Coverage: while offset 0 remained in a controlled handler on one partition,
+offset 1 on that partition completed but did not advance its committed prefix;
+offset 0 on an independent partition committed to 1. Releasing the first
+handler allowed its partition to commit to 2 without disturbing the other
+partition's offset. `OffsetCommitTrackerTest` continues to cover offset gaps.
+
+B14 worker pressure — 2026-10-11
+Branch: feat/l06-worker-runtime; working tree based on 94f5550.
+Command: `mvn -B -ntp -Dtest=ProcessingWindowTest,L04RetryAndLimiterTest -Dit.test=KafkaWorkerIT,ProcessingWindowKafkaIT verify`
+Result: passed; 10 unit tests and 6 Testcontainers integrations (KafkaWorkerIT:
+5 cases, ProcessingWindowKafkaIT: 1 case), 0 failures/errors/skips.
+Coverage: with an injected six-record window and a blocked same-job head, the
+worker reached its count watermark with 4–6 records retained, left the source
+offset uncommitted, and admitted no further retained batch while paused. After
+releasing the handler, all 20 records completed and committed, retained count
+returned to zero, and the window resumed. The companion ProcessingWindowKafkaIT
+confirmed the Vert.x consumer continued polling while paused and resumed record
+delivery only after commit acknowledgment and reservation release.
+The production worker still uses its default 1,000-record / 16 MiB window; the
+smaller injected limits only make the worker integration scenario practical.
+
+Ordered L06 follow-up — B07 retry worker controls:
+Command: mvn -B -ntp -Dtest=WorkerConfigTest -Dit.test=KafkaWorkerIT verify
+Result: passed; 2 unit tests in WorkerConfigTest and 3 Testcontainers
+KafkaWorkerIT cases, 0 failures/errors/skips.
+Coverage: retry start rate defaults to 1/s and is configurable; a controlled
+handler test verifies configured concurrency 2, at least 175 ms spacing at
+configured rate 4/s, attempt-2 retryable failure publishing and executing
+attempt 3, and committed retry offsets after processing/handoff.
+Expected RecordTooLargeException warnings came from the injected failed-send
+recovery case, which passed. Evidence: current session output, 2026-10-10.
+
 Fresh health check of pushed feature snapshot:
 Commit: 7e9e7d090fa9c3823c30ffc0e75a6de88e756ca1
 Branch: feat/l06-worker-runtime
@@ -15,7 +101,8 @@ and verified failed-handoff retention/recovery and DLQ behavior.
 Acceptance boundary: this run confirms only cases exercised by the suite. It
 does not close L06. Worker-level B15 out-of-order/independent-partition commits,
 B19 unconfirmed cancellation, B14 full worker-under-pressure behavior, sustained
-broker-outage B18, and worker-level B07/B11/B13 behavior remain unverified.
+broker-outage B18, and worker-level B11/B13 behavior remain unverified. B07 was
+covered by the focused broker-backed run above, not by this earlier clean run.
 The Compose demonstrations below are prior manual evidence, not part of this
 Maven invocation.
 

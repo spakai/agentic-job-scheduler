@@ -15,7 +15,6 @@ public final class AdaptiveLimiter {
     private final int minimum;
     private final int maximum;
     private int limit;
-    private long samples;
 
     public AdaptiveLimiter() {
         this(DEFAULT_MIN, DEFAULT_MAX, DEFAULT_INITIAL);
@@ -53,7 +52,6 @@ public final class AdaptiveLimiter {
         if (completedAttempts < 0) {
             throw new IllegalArgumentException("Completed attempts must be non-negative");
         }
-        samples++;
         if (completedAttempts < 20 && !throttled) {
             return limit;
         }
@@ -64,14 +62,10 @@ public final class AdaptiveLimiter {
             limit = Math.max(minimum, decreased);
             return limit;
         }
-        if (backlogPresent && samples >= 20) {
+        if (backlogPresent) {
             int increased = limit + 1;
             limit = Math.min(maximum, increased);
         }
         return limit;
-    }
-
-    public long samples() {
-        return samples;
     }
 }

@@ -4,13 +4,18 @@ import java.util.Map;
 import java.util.Objects;
 
 public record WorkerConfig(String bootstrapServers, WorkerRole role, int concurrency,
-                           int topicPartitions) {
+                           int topicPartitions, int retryStartsPerSecond) {
     public WorkerConfig {
         Objects.requireNonNull(bootstrapServers, "bootstrapServers");
         Objects.requireNonNull(role, "role");
-        if (bootstrapServers.isBlank() || concurrency < 1 || topicPartitions < 1) {
+        if (bootstrapServers.isBlank() || concurrency < 1 || topicPartitions < 1
+                || retryStartsPerSecond < 1) {
             throw new IllegalArgumentException("Invalid worker configuration");
         }
+    }
+
+    public WorkerConfig(String bootstrapServers, WorkerRole role, int concurrency, int topicPartitions) {
+        this(bootstrapServers, role, concurrency, topicPartitions, 1);
     }
 
     public static WorkerConfig fromEnvironment(Map<String, String> environment) {
@@ -20,10 +25,11 @@ public record WorkerConfig(String bootstrapServers, WorkerRole role, int concurr
         int concurrency = integer(environment, "WORKER_CONCURRENCY",
                 role == WorkerRole.MAIN ? 16 : 2);
         int partitions = integer(environment, "KAFKA_TOPIC_PARTITIONS", 12);
+        int retryStartsPerSecond = integer(environment, "WORKER_RETRY_STARTS_PER_SECOND", 1);
         if (role == WorkerRole.MAIN && concurrency > 128) {
             throw new IllegalArgumentException("Main worker concurrency cannot exceed 128");
         }
-        return new WorkerConfig(bootstrap, role, concurrency, partitions);
+        return new WorkerConfig(bootstrap, role, concurrency, partitions, retryStartsPerSecond);
     }
 
     private static String required(Map<String, String> environment, String name) {
