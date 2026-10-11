@@ -1,6 +1,6 @@
 # L06: Bound retained work and demonstrate recovery
 
-Status: ready for review
+Status: complete
 
 ## Scope and plan
 
@@ -13,11 +13,11 @@ Status: ready for review
   B11 rebalance/stale callbacks; B18 sustained broker outage/recovery. Keep
   each acceptance independently reviewable and record test evidence and any
   remaining gap before starting the next.
-- Current slice plan — final verification: run the full clean suite with the
-  B19 timeout/cancellation cases, review the source and evidence diffs, and
-  submit the cancellation contract as its own PR from refreshed `origin/main`.
-- Base commit and branch: PR #10 merge commit `a09a26e`; current continuation
-  branch `feat/l06-handler-cancellation`.
+- Current slice plan — runtime acceptance is complete. Track GH-600 GitHub
+  enforcement/review practice separately; no branch settings were changed as
+  part of L06 closeout.
+- Base commit and branch: PR #11 merge commit `1f2fb29`; closeout branch is
+  based on refreshed `origin/main`.
 - Current continuation slice (2026-10-10): complete Spec 002 B14–B20 runtime
   acceptance by wiring the existing library components into runnable main and
   retry workers, adding explicit topic provisioning, a sample producer and
@@ -272,12 +272,12 @@ Status: ready for review
 | Safe-prefix and handoff boundaries (B15/B16) | L06 working tree | `mvn -B -ntp clean verify` | passed in tracker unit tests and worker-level B15 integration; B16 handoff acknowledgment remains covered by KafkaWorkerIT | [L06 validation evidence](evidence/L06-validation.txt) |
 | Worker retry/DLQ handoff, bounded invalid-record DLQ, failed retry-send retention/recovery (B06/B16/B17) | L06 working tree | `mvn -B -ntp clean -Dit.test=KafkaWorkerIT verify` | passed: 123 unit tests and 1 Testcontainers worker integration test; rejected sends logged and recovered, no repeated handler invocation | [L06 validation evidence](evidence/L06-validation.txt) |
 | Compose roles, two retry replicas, bounded DLQ, persistent broker restart and queued main replay (partial B18/B20) | L06 working tree | `docker compose -p l06-worker-runtime up --build --scale retry-worker=2 --detach`; publish/scale/restart/inspect commands recorded in evidence | passed manually; services remain running with named volume preserved | [L06 validation evidence](evidence/L06-validation.txt) |
-| Full B14–B20 runtime acceptance | working tree based on `a09a26e` | `mvn -B -ntp clean verify` plus recorded Compose checks | covered: worker integrations and Compose evidence; full suite passed with 126 unit tests and 13 Testcontainers integrations | [L06 validation evidence](evidence/L06-validation.txt) |
+| Full B14–B20 runtime acceptance | PR #11 merge `1f2fb29` | `mvn -B -ntp clean verify` plus recorded Compose checks | complete: worker integrations and Compose evidence; full suite passed with 126 unit tests and 13 Testcontainers integrations | [L06 validation evidence](evidence/L06-validation.txt) |
 | Full clean build, unit suite, Kafka integration, and package | `829dd1f` | `mvn -B -ntp clean verify` | passed: 126 unit tests and 13 Testcontainers integration tests; JAR built | [L06 validation evidence](evidence/L06-validation.txt) |
 | Whitespace | L06 working tree | `git diff --check` | passed after source, test, and documentation updates | [L06 validation evidence](evidence/L06-validation.txt) |
 | Editor diagnostics | L06 working tree | VS Code diagnostics for the touched Java source and test files | no errors | current session output |
 | Docker/Testcontainers broker | working tree | `mvn -B -ntp verify` | passed; L06 Kafka container started and cleaned up; pre-existing `spec007-worker` containers untouched | [L06 validation evidence](evidence/L06-validation.txt) |
-| CI/security/restricted-agent exercises | n/a | workflows/scans not yet selected | not run | no claim |
+| CI/security/restricted-agent exercises | separate GH-600 task | GitHub Actions and repository ruleset inspection | Maven CI passed; enforcement and restricted-agent exercises remain open | [GH-600 controls task](GH600-controls-review.md) |
 
 Negative window tests reject fetch-bound violations, prevent new reservations
 while paused, prevent foreign/double release, and verify that a failed commit
@@ -336,28 +336,27 @@ during a sustained broker outage.
 
 ## Handoff and review
 
-- Merged baseline: PR #10 merged to `main` at `a09a26e`; its Java 21 test/package
-  CI check passed. Commit `829dd1f` on `feat/l06-handler-cancellation` adds B19
-  and is pushed. [PR #11](https://github.com/spakai/agentic-job-scheduler/pull/11)
-  targets `main`; its Java 21 check is in progress. The original local history,
-  which contained missing Git objects and could not be pushed, is preserved
+- Merged baseline: PR #11 merged to `main` at `1f2fb29`; its Java 21 test/package
+  CI check passed. PRs #9–#11 contain the L06 runtime implementation and
+  acceptance evidence. The original local history, which contained missing Git
+  objects and could not be pushed, is preserved
   locally as `backup/feat-l06-worker-runtime-corrupt-history`. Unrelated untracked
   `.vscode/settings.json` remains untouched.
 - Completed steps: implemented executable main/retry workers and Compose demo;
-  B07, B11–B15, B18, and B19 worker behavior are covered by broker tests. A
-  fresh `mvn -B -ntp clean verify` passed on this branch with 126 unit tests and
+  B14–B20 runtime acceptance and B07/B11/B13 behavior are covered by broker or
+  Compose evidence. `mvn -B -ntp clean verify` passed with 126 unit tests and
   13 Testcontainers integrations; prior evidence records broker
   retry/DLQ, crash/replay, failed-send recovery, and Compose scaling/DLQ/
   persistent broker restart.
-- Next concrete step: record PR #11 CI and reviewer disposition, updating
-  evidence after each actual check, and only close L06 when the acceptance table
-  is adequately covered.
-- Open risks/decisions and owner: review the B19 public cancellation API change.
-  No exactly-once, global ordering,
+- Next concrete step: continue the separate GH-600 enforcement/review exercise
+  in [GH600-controls-review](GH600-controls-review.md).
+- Open risks/decisions and owner: branch protection and independent GitHub review
+  controls remain unverified in the separate GH-600 task. No exactly-once, global ordering,
   durable deduplication, or external-effect fencing claim is made.
-- Reviewer findings and disposition: pending.
-- PR / final outcome: L06 runtime acceptance is ready for review; PRs #9 and #10
-  are merged and PR #11 is open for B19. GH-600 review evidence remains open.
+- Reviewer findings and disposition: PRs #9–#11 have successful Java CI checks;
+  the GitHub API reports no review entries/comments on those PRs. No independent
+  human review is claimed; controls evidence is tracked separately.
+- PR / final outcome: L06 runtime acceptance complete; PRs #9–#11 are merged.
 
 ## Learning check
 

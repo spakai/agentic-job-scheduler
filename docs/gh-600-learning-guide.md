@@ -179,13 +179,13 @@ grant broad permissions merely to make a failing workflow turn green.
 | --- | --- |
 | Kafka architectural specification | Simplified for immediate main/retry processing; runtime not implemented |
 | Learning workflow and templates | Written; exercises not yet run |
-| Runtime implementation / Maven build | L01–L06 library components implemented incrementally; executable Kafka worker/runtime remains pending |
-| Actual automated evaluations and scans | L01–L06 unit/component checks and one broker-backed B14 pause/poll/commit/resume check executed; full L06 runtime acceptance and security scans pending |
+| Runtime implementation / Maven build | Executable main/retry runtime implemented; L06 B06–B20 acceptance has test or demo evidence; see [L06 task record](tasks/L06-backpressure-recovery.md) |
+| Actual automated evaluations and scans | Full `mvn -B -ntp clean verify` passed: 126 unit tests and 13 Testcontainers integrations; dependency scan evidence is in the L06 task record |
 | Copilot/MCP setup and permissions exercise | Not verified |
 | Fresh-session memory exercise | L03 durable handoff/drift check prepared; actual fresh-session resumption not run |
 | Multi-agent exercise | Not run |
-| Basic GitHub Actions CI | PR success/failure and artifacts verified before L03; see [CI01](tasks/CI01-maven-actions.md) |
-| Agent-in-CI and GitHub enforcement exercise | Not configured/verified |
+| Basic GitHub Actions CI | CI01 positive/negative runs verified; PRs #9–#11 Java 21 checks passed and merged; see [CI01](tasks/CI01-maven-actions.md) and [GH-600 controls evidence](tasks/GH600-controls-review.md) |
+| Agent-in-CI and GitHub enforcement exercise | Not configured; main protection endpoint returned 404 and repository rulesets were empty; see [GH-600 controls evidence](tasks/GH600-controls-review.md) |
 
 Update this ledger with evidence links as exercises finish. Read the official
 study guide again before exam preparation to catch changed objectives and topics
@@ -200,8 +200,10 @@ and the check of understanding are still required to finish the learning exercis
 
 L03 implementation, concurrency trace, and resumption handoff: [task record](tasks/L03-immediate-processing.md).
 
-L04 retry/limiter, L05 local ownership invalidation, and the current L06 bounded
-window component are recorded in the [L04](tasks/L04-retry-dlq-limiter.md),
+L04 retry/limiter, L05 local ownership invalidation, and completed L06 worker
+runtime are recorded in the [L04](tasks/L04-retry-dlq-limiter.md),
 [L05](tasks/L05-replay-rebalances.md), and
 [L06](tasks/L06-backpressure-recovery.md) task records. L06 broker/runtime
-acceptance remains pending.
+acceptance is complete. The separate GH-600 Lesson 7 exercise is tracked in
+[GH600-controls-review](tasks/GH600-controls-review.md); branch enforcement and
+agent-in-CI remain open rather than being inferred from passing CI.
