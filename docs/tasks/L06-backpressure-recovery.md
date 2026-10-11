@@ -247,8 +247,8 @@ Status: in progress
 
 | Check | Commit | Command or workflow | Result | Evidence |
 | --- | --- | --- | --- | --- |
-| Broker outage and worker recovery (B18) | working tree based on `bffaf8a` | `mvn -B -ntp -Dtest=WorkerConfigTest -Dit.test=KafkaWorkerIT#workerRecoversCommitsAndPollingAfterKafkaBrokerOutage verify` | passed twice; 2 unit tests and 1 Testcontainers worker integration per run; full suite also passed | [L06 validation evidence](evidence/L06-validation.txt) |
-| Rebalance revocation and stale handler callback (B11) | working tree based on `bffaf8a` | `mvn -B -ntp -Dtest=WorkerConfigTest -Dit.test=KafkaWorkerIT#workerRebalanceIgnoresStaleHandlerAndReplaysOnNewOwner verify` | passed twice; 2 unit tests and 1 Testcontainers worker integration per run | [L06 validation evidence](evidence/L06-validation.txt) |
+| Broker outage and worker recovery (B18) | `ddc8ecd` | `mvn -B -ntp -Dtest=WorkerConfigTest -Dit.test=KafkaWorkerIT#workerRecoversCommitsAndPollingAfterKafkaBrokerOutage verify` | passed twice; 2 unit tests and 1 Testcontainers worker integration per run; full suite also passed | [L06 validation evidence](evidence/L06-validation.txt) |
+| Rebalance revocation and stale handler callback (B11) | `ddc8ecd` | `mvn -B -ntp -Dtest=WorkerConfigTest -Dit.test=KafkaWorkerIT#workerRebalanceIgnoresStaleHandlerAndReplaysOnNewOwner verify` | passed twice; 2 unit tests and 1 Testcontainers worker integration per run | [L06 validation evidence](evidence/L06-validation.txt) |
 | Unconfirmed handler during worker shutdown (partial B19) | `6ad2d2e` | `mvn -B -ntp -Dtest=WorkerConfigTest -Dit.test=KafkaWorkerIT#workerShutdownWaitsForUnconfirmedHandlerBeforeCommittingSource verify` | passed: 2 unit tests and 1 Testcontainers worker integration; no early commit; cancellation API remains unimplemented | [L06 validation evidence](evidence/L06-validation.txt) |
 | Out-of-order prefix and independent partition commits (B15) | `6ad2d2e` | `mvn -B -ntp -Dtest=WorkerConfigTest,L04RetryAndLimiterTest,OffsetCommitTrackerTest,ProcessingWindowTest -Dit.test=KafkaWorkerIT,ProcessingWindowKafkaIT verify` | passed: 29 unit tests and 7 Testcontainers integration tests; 0 failures/errors/skips | [L06 validation evidence](evidence/L06-validation.txt) |
 | Worker bounded-window pressure and pause/resume (B14) | `6ad2d2e` | `mvn -B -ntp -Dtest=ProcessingWindowTest,L04RetryAndLimiterTest -Dit.test=KafkaWorkerIT,ProcessingWindowKafkaIT verify` | passed: 10 unit tests and 6 Testcontainers integration tests; 0 failures/errors/skips | [L06 validation evidence](evidence/L06-validation.txt) |
@@ -263,7 +263,7 @@ Status: in progress
 | Worker retry/DLQ handoff, bounded invalid-record DLQ, failed retry-send retention/recovery (B06/B16/B17) | L06 working tree | `mvn -B -ntp clean -Dit.test=KafkaWorkerIT verify` | passed: 123 unit tests and 1 Testcontainers worker integration test; rejected sends logged and recovered, no repeated handler invocation | [L06 validation evidence](evidence/L06-validation.txt) |
 | Compose roles, two retry replicas, bounded DLQ, persistent broker restart and queued main replay (partial B18/B20) | L06 working tree | `docker compose -p l06-worker-runtime up --build --scale retry-worker=2 --detach`; publish/scale/restart/inspect commands recorded in evidence | passed manually; services remain running with named volume preserved | [L06 validation evidence](evidence/L06-validation.txt) |
 | Full B14–B20 runtime acceptance | L06 working tree | `mvn -B -ntp clean verify` plus manual Compose checks | partial: see gaps below; not complete | [L06 validation evidence](evidence/L06-validation.txt) |
-| Full clean build, unit suite, Kafka integration, and package | working tree based on `bffaf8a` | `mvn -B -ntp clean verify` | passed: 125 unit tests and 11 Testcontainers integration tests; JAR built | [L06 validation evidence](evidence/L06-validation.txt) |
+| Full clean build, unit suite, Kafka integration, and package | `ddc8ecd` | `mvn -B -ntp clean verify` | passed: 125 unit tests and 11 Testcontainers integration tests; JAR built | [L06 validation evidence](evidence/L06-validation.txt) |
 | Whitespace | L06 working tree | `git diff --check` | passed after source, test, and documentation updates | [L06 validation evidence](evidence/L06-validation.txt) |
 | Editor diagnostics | L06 working tree | VS Code diagnostics for the touched Java source and test files | no errors | current session output |
 | Docker/Testcontainers broker | working tree | `mvn -B -ntp verify` | passed; L06 Kafka container started and cleaned up; pre-existing `spec007-worker` containers untouched | [L06 validation evidence](evidence/L06-validation.txt) |
@@ -326,11 +326,11 @@ during a sustained broker outage.
 ## Handoff and review
 
 - Merged baseline: PR #9 merged to `main` at `bffaf8a`; its Java 21 test/package
-  CI check passed. The current B11 continuation branch is
-  `feat/l06-rebalance-stale-callbacks`, based on that merge. The original local history, which
-  contained missing Git objects and could not be pushed, is preserved locally
-  as `backup/feat-l06-worker-runtime-corrupt-history`. The B11 implementation
-  and test are currently uncommitted on the continuation branch. Unrelated untracked
+  CI check passed. Commit `ddc8ecd` on `feat/l06-rebalance-stale-callbacks` adds
+  B11/B18 and is pushed. [PR #10](https://github.com/spakai/agentic-job-scheduler/pull/10)
+  targets `main`; its Java 21 check is in progress. The original local history,
+  which contained missing Git objects and could not be pushed, is preserved
+  locally as `backup/feat-l06-worker-runtime-corrupt-history`. Unrelated untracked
   `.vscode/settings.json` remains untouched.
 - Completed steps: implemented executable main/retry workers and Compose demo;
   B07, B11–B15, and B18 worker behavior are covered by broker tests; B19 has
@@ -348,9 +348,8 @@ during a sustained broker outage.
   No exactly-once, global ordering,
   durable deduplication, or external-effect fencing claim is made.
 - Reviewer findings and disposition: pending.
-- PR / final outcome: L06 remains in progress; PR #9 is merged. B18 is covered;
-  B19 cancellation remains open. The B11/B18 continuation has not been
-  committed or submitted as a PR yet.
+- PR / final outcome: L06 remains in progress; PR #9 is merged and PR #10 is
+  open. B11/B18 are covered; B19 cancellation remains open.
 
 ## Learning check
 

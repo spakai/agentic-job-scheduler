@@ -84,7 +84,7 @@ The production worker still uses its default 1,000-record / 16 MiB window; the
 smaller injected limits only make the worker integration scenario practical.
 
 B11 worker rebalance and stale callbacks — 2026-10-11
-Branch: feat/l06-rebalance-stale-callbacks; based on PR #9 merge bffaf8a.
+Branch: feat/l06-rebalance-stale-callbacks; commit ddc8ecd, based on PR #9 merge bffaf8a.
 Focused command: `mvn -B -ntp -Dtest=WorkerConfigTest -Dit.test=KafkaWorkerIT#workerRebalanceIgnoresStaleHandlerAndReplaysOnNewOwner verify`
 Result: passed twice; each run passed 2 unit tests and 1 Testcontainers
 KafkaWorkerIT case, 0 failures/errors/skips.
@@ -108,7 +108,7 @@ Expected `RecordTooLargeException` warnings came from the failed-handoff
 recovery case, which passed.
 
 B18 broker outage and worker recovery — 2026-10-11
-Branch: feat/l06-rebalance-stale-callbacks; based on PR #9 merge bffaf8a.
+Branch: feat/l06-rebalance-stale-callbacks; commit ddc8ecd, based on PR #9 merge bffaf8a.
 Focused command: `mvn -B -ntp -Dtest=WorkerConfigTest -Dit.test=KafkaWorkerIT#workerRecoversCommitsAndPollingAfterKafkaBrokerOutage verify`
 Result: passed twice; each run passed 2 unit tests and 1 Testcontainers
 KafkaWorkerIT case, 0 failures/errors/skips.
@@ -126,6 +126,12 @@ Testcontainers integrations (KafkaWorkerIT: 9, KafkaWorkerCrashIT: 1,
 ProcessingWindowKafkaIT: 1), 0 failures/errors/skips; JAR built.
 Expected `RecordTooLargeException` warnings came from the injected failed-send
 recovery test, which passed.
+This run validated the source/test tree committed as ddc8ecd.
+
+GitHub CI — PR #10
+PR: https://github.com/spakai/agentic-job-scheduler/pull/10
+Check: Java 21 test and package.
+Status when recorded: in progress.
 
 Ordered L06 follow-up — B07 retry worker controls:
 Command: mvn -B -ntp -Dtest=WorkerConfigTest -Dit.test=KafkaWorkerIT verify
