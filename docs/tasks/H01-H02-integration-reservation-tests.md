@@ -86,15 +86,18 @@ Status: ready for review
   test passed. Then the complete clean verify lifecycle passed: 127 unit tests,
   13 `KafkaWorkerIT` tests, 1 `KafkaWorkerCrashIT` test, and 1
   `ProcessingWindowKafkaIT` test; all had zero failures/errors/skips.
+- 2026-10-19: committed the verified test/evidence changes as `419a153`
+  (`test: make H01/H02 integration assertions batch-aware`) and opened PR #16
+  against `main`.
 
 ## Evaluation
 
 | Check | Commit | Command or workflow | Result | Evidence |
 | --- | --- | --- | --- | --- |
 | Initial Docker-enabled H01/H02 integration run | `763eac5` | `mvn -B -ntp -Dit.test=KafkaWorkerIT verify` | failed: 127 unit tests passed; 10/12 ITs passed, 2 assertion failures | [H01-H02 integration validation evidence](evidence/H01-H02-integration-reservation-tests.txt) |
-| Targeted corrected H01/H02 and B11 integration cases | working tree | `mvn -B -ntp '-Dit.test=KafkaWorkerIT#revokedOwnershipInvalidatesRateGateQueuedRetryBeforeItEverDispatches+revokedAssignmentRetiresQueuedAndSettledHandlerReservations+workerRebalanceIgnoresStaleHandlerAndReplaysOnNewOwner' verify` | passed: 127 unit tests; 3 selected ITs, 0 failures/errors/skips | [H01-H02 integration validation evidence](evidence/H01-H02-integration-reservation-tests.txt) |
-| Full clean verification, including unit, package, and broker-backed integration tests | working tree | `mvn -B -ntp clean verify` | passed: 127 unit tests + 15 ITs, 0 failures/errors/skips; package built | [H01-H02 integration validation evidence](evidence/H01-H02-integration-reservation-tests.txt) |
-| Diff whitespace | working tree | `git diff --check` | passed | [H01-H02 integration validation evidence](evidence/H01-H02-integration-reservation-tests.txt) |
+| Targeted corrected H01/H02 and B11 integration cases | `419a153` | `mvn -B -ntp '-Dit.test=KafkaWorkerIT#revokedOwnershipInvalidatesRateGateQueuedRetryBeforeItEverDispatches+revokedAssignmentRetiresQueuedAndSettledHandlerReservations+workerRebalanceIgnoresStaleHandlerAndReplaysOnNewOwner' verify` | passed: 127 unit tests; 3 selected ITs, 0 failures/errors/skips | [H01-H02 integration validation evidence](evidence/H01-H02-integration-reservation-tests.txt) |
+| Full clean verification, including unit, package, and broker-backed integration tests | `419a153` | `mvn -B -ntp clean verify` | passed: 127 unit tests + 15 ITs, 0 failures/errors/skips; package built | [H01-H02 integration validation evidence](evidence/H01-H02-integration-reservation-tests.txt) |
+| Diff whitespace | `419a153` | `git diff --check` | passed | [H01-H02 integration validation evidence](evidence/H01-H02-integration-reservation-tests.txt) |
 
 ## Failure analysis and correction
 
@@ -121,18 +124,18 @@ Status: ready for review
 
 ## Handoff and review
 
-- Latest verified state: all changes are verified in the working tree on
+- Latest verified commit: `419a153`
+  (`test: make H01/H02 integration assertions batch-aware`) on
   `fix/h01-h02-integration-reservation-tests`, based on `763eac5`.
 - Completed steps: confirmed PR #15 merge; enabled Docker-backed Testcontainers
   execution; captured and diagnosed the initial assertion failures; made the
   test scenarios batch-aware; reran the focused cases and the complete
   `clean verify` suite successfully.
-- Next concrete step: review the test-only diff, then decide whether to commit
-  and open a follow-up PR or proceed to Spec 003 H03/H04.
+- Next concrete step: review and merge PR #16, then proceed to Spec 003 H03/H04.
 - Open risks/decisions and owner: none identified by this validation run;
   normal code review remains pending.
 - Reviewer findings and disposition: pending.
-- PR / final outcome: not yet opened.
+- PR / final outcome: open PR #16; awaiting review/merge.
 
 ## Learning check
 
