@@ -208,6 +208,23 @@ public final class ImmediateJobDispatcher {
                 .count();
     }
 
+    /**
+     * Sources of submissions still queued (never started). Lets the owner release any
+     * processing-window reservation held for work that will now be discarded instead of run,
+     * such as when this dispatcher's ownership is about to be or has been revoked.
+     */
+    public Set<SourceRecord> queuedSources(Context ownerContext) {
+        if (ownerContext != context) {
+            throw new IllegalArgumentException("Queued sources are available only to the owner context");
+        }
+        requireContext();
+        return lanes.values().stream()
+                .flatMap(lane -> lane.stream())
+                .filter(submission -> submission.state == State.QUEUED)
+                .map(submission -> submission.execution.source())
+                .collect(Collectors.toUnmodifiableSet());
+    }
+
     public Optional<OffsetCommitTracker.CommitBatch> beginCommit() {
         requireContext();
         if (ownershipRevoked) return Optional.empty();

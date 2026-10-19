@@ -1,0 +1,63 @@
+H01-H02 validation evidence — 2026-10-19
+
+Base commit: 06ad660 (Merge pull request #13 from spakai/feat/spec03-worker-runtime-correctness)
+Implementation commit: 0133a84 (feat: retire revoked reservations and invalidate rate-gated retries (H01/H02))
+Branch: feat/h01-h02-assignment-lifecycle
+
+Focused dispatcher lifecycle tests:
+Command: mvn -B -ntp -Dtest=ImmediateJobDispatcherTest test
+Result: passed; 21 tests, 0 failures, 0 errors, 0 skipped.
+
+Full clean test suite:
+Command: mvn -B -ntp clean test
+Result: passed; 127 tests, 0 failures, 0 errors, 0 skipped.
+Breakdown: EnvelopeValidatorTest 77, WorkerConfigTest 2,
+L04RetryAndLimiterTest 5, ImmediateJobDispatcherTest 21,
+OffsetCommitTrackerTest 17, ProcessingWindowTest 5.
+
+Clean package and regression suite:
+Command: mvn -B -ntp clean package
+Result: passed; 127 tests, 0 failures, 0 errors, 0 skipped; built
+target/agentic-job-scheduler-0.1.0-SNAPSHOT.jar.
+
+Whitespace:
+Command: git diff --check
+Result: passed.
+
+Compile-only verification for Testcontainers-based integration tests:
+KafkaWorkerIT.java (including the extended B11/H01 scenario and the new H02
+scenario) and KafkaWorkerCrashIT.java compile cleanly as part of the
+maven-compiler-plugin testCompile phase above. They are not named `*Test`
+so maven-surefire-plugin does not execute them by default, and this
+environment has no Docker daemon available (`docker info` fails with
+"could not be found in this WSL 2 distro"), so neither scenario has been
+executed here. No pass/fail claim is made for them beyond compilation.
+
+Failure found and corrected during this validation pass:
+mvn -B -ntp clean test initially failed to compile KafkaWorker.java:
+  [ERROR] KafkaWorker.java:[885,21] local variables referenced from a lambda
+  expression must be final or effectively final
+  [ERROR] KafkaWorker.java:[887,21] local variables referenced from a lambda
+  expression must be final or effectively final
+Cause: RateGate.startNext() reassigned its RateRequest loop variable
+(including to null) inside a do-while loop body, then captured it in a
+trailing lambda; javac does not treat such a variable as effectively final.
+Fix: hoisted the validated request into a separate `final RateRequest
+request` assigned exactly once outside the loop. Re-ran mvn -B -ntp clean
+test afterward; passed as recorded above.
+
+Acceptance evidence:
+- H01 (unit): ImmediateJobDispatcherTest.
+  queuedSourcesReturnsOnlyNeverStartedSubmissionsAndEnforcesOwnerContext
+  proves queuedSources returns only QUEUED submissions, excludes RUNNING
+  ones, enforces the owner-context guard, and returns empty once the queued
+  submission starts.
+- H01 (integration, written/unexecuted): KafkaWorkerIT.
+  workerRebalanceIgnoresStaleHandlerAndReplaysOnNewOwner, extended with
+  reservation-count assertions for both the QUEUED-discard path and the
+  RUNNING-settle-after-revoke path.
+- H02 (integration, written/unexecuted): KafkaWorkerIT.
+  revokedOwnershipInvalidatesRateGateQueuedRetryBeforeItEverDispatches,
+  proving a rate-gate-queued retry is skipped (never dispatched, never
+  republished, never dead-lettered) once its owner is revoked by a forced
+  shutdown timeout, while the still-running winner keeps its reservation.
