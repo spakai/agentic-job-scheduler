@@ -375,6 +375,77 @@ class KafkaWorkerIT {
         }
     }
 
+    /**
+     * H02: a retry handler still sitting behind the rate gate when its owning assignment is
+     * revoked must never be dispatched once its turn comes up, and its processing-window
+     * reservation must still be released even though it never ran.
+     */
+    @Test
+    void revokedOwnershipInvalidatesRateGateQueuedRetryBeforeItEverDispatches() throws Exception {
+        String bootstrap = KAFKA.getBootstrapServers();
+        TopicProvisioner.ensureTopics(bootstrap, 2);
+
+        List<UUID> jobIds = new ArrayList<>();
+        Set<Integer> partitions = new HashSet<>();
+        while (jobIds.size() < 2) {
+            UUID id = UUID.randomUUID();
+            int partition = partition(JobRecordEncoder.key(id), 2);
+            if (partitions.add(partition)) {
+                jobIds.add(id);
+            }
+        }
+
+        ConcurrentLinkedQueue<UUID> startedJobIds = new ConcurrentLinkedQueue<>();
+        AtomicInteger starts = new AtomicInteger();
+        ProcessingWindow window = new ProcessingWindow();
+
+        Vertx vertx = Vertx.vertx();
+        // concurrency=2 so both distinct-job, distinct-partition retries go RUNNING immediately
+        // in their own per-partition dispatcher; startsPerSecond=1 paces the shared retry rate
+        // gate so only one of the two can actually be dispatched before the 500ms shutdown
+        // timeout forces ownership revocation, well short of the 1000ms pacing interval.
+        KafkaWorker retry = new KafkaWorker(vertx,
+                new WorkerConfig(bootstrap, WorkerRole.RETRY, 2, 2, 1),
+                execution -> {
+                    starts.incrementAndGet();
+                    startedJobIds.add(execution.job().jobId());
+                    return Promise.<Void>promise().future();
+                }, window, 500);
+        try {
+            retry.start().toCompletionStage().toCompletableFuture().get(30, TimeUnit.SECONDS);
+            try (KafkaProducer<byte[], byte[]> producer =
+                         new KafkaProducer<>(producerProperties(bootstrap))) {
+                for (UUID jobId : jobIds) {
+                    byte[] key = JobRecordEncoder.key(jobId);
+                    int partition = partition(key, 2);
+                    SourceRecord source = new SourceRecord(TopicProvisioner.MAIN_TOPIC, partition, 0);
+                    JobEnvelope job = job(jobId, 3);
+                    producer.send(new ProducerRecord<>(TopicProvisioner.RETRY_TOPIC,
+                            partition, key, JobRecordEncoder.retry(job, 2, source, source,
+                            "HANDLER_FAILURE"))).get(10, TimeUnit.SECONDS);
+                }
+            }
+
+            awaitCounter(starts, 1);
+            UUID winner = startedJobIds.peek();
+            UUID loser = jobIds.stream().filter(id -> !id.equals(winner)).findFirst().orElseThrow();
+
+            retry.close().toCompletionStage().toCompletableFuture().get(10, TimeUnit.SECONDS);
+
+            // Let the rate gate's already-scheduled ~1-second timer for the loser fire; it must
+            // find the owning assignment revoked and skip dispatching rather than wait forever.
+            Thread.sleep(1_200);
+            assertEquals(1, starts.get(),
+                    "the rate-gate-queued loser must never be dispatched once ownership is revoked");
+            assertNoHandoffForJob(bootstrap, loser);
+            assertEquals(1, window.retainedRecords(),
+                    "only the still-running winner's reservation remains; the invalidated loser's "
+                            + "reservation must be released even though it never ran");
+        } finally {
+            vertx.close().toCompletionStage().toCompletableFuture().get(10, TimeUnit.SECONDS);
+        }
+    }
+
     /** B13: the main worker applies healthy and slow-window concurrency changes. */
     @Test
     void mainWorkerAdaptsConcurrencyFromMeasuredHandlerWindows() throws Exception {
@@ -761,7 +832,12 @@ class KafkaWorkerIT {
         }
     }
 
-    /** B11: a revoked owner's late handler callback cannot dispatch or commit stale work. */
+    /**
+     * B11: a revoked owner's late handler callback cannot dispatch or commit stale work.
+     * H01: revoking a partition must also release the revoked owner's window reservations for
+     * (a) its never-started queued successor, discarded immediately at revoke, and (b) its
+     * already-running handler, released once that handler's own completion settles.
+     */
     @Test
     void workerRebalanceIgnoresStaleHandlerAndReplaysOnNewOwner() throws Exception {
         String bootstrap = KAFKA.getBootstrapServers();
@@ -844,6 +920,7 @@ class KafkaWorkerIT {
             }
             assertTrue(oldWindow.retainedRecords() >= 6,
                     "the old owner must retain each queued successor before the rebalance");
+            int retainedBeforeRebalance = oldWindow.retainedRecords();
 
             newOwner.start().toCompletionStage().toCompletableFuture().get(30, TimeUnit.SECONDS);
             awaitAtLeast(newStarts, 1, 30);
@@ -853,12 +930,32 @@ class KafkaWorkerIT {
                     TopicProvisioner.MAIN_TOPIC, replayedPartition);
             assertEquals(1, newStartsByJob.get(replayedJob).get());
 
+            // H01: the revoked partition's never-started (QUEUED) successor must be released
+            // immediately, without waiting for the still-running handler to settle.
+            long discardDeadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(20);
+            while (oldWindow.retainedRecords() >= retainedBeforeRebalance
+                    && System.nanoTime() < discardDeadline) {
+                Thread.sleep(25);
+            }
+            assertEquals(retainedBeforeRebalance - 1, oldWindow.retainedRecords(),
+                    "revoking the partition must release its discarded queued successor");
+
             oldGates.get(replayedJob).peek().tryComplete();
             Thread.sleep(500);
             assertEquals(1, oldStartsByJob.get(replayedJob).get(),
                     "revocation must prevent the old owner from starting its queued successor");
             assertEquals(-1, committedOffset(bootstrap, WorkerRole.MAIN.groupId(), topicPartition),
                     "the stale old-owner callback must not commit while the new owner is blocked");
+
+            // H01: the stale handler's completion settles after revoke; its reservation must
+            // still be released (no permanent leak) even though nothing can be committed for it.
+            long settleDeadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(20);
+            while (oldWindow.retainedRecords() >= retainedBeforeRebalance - 1
+                    && System.nanoTime() < settleDeadline) {
+                Thread.sleep(25);
+            }
+            assertEquals(retainedBeforeRebalance - 2, oldWindow.retainedRecords(),
+                    "settling the stale running handler after revoke must also release its reservation");
 
             newGates.get(replayedJob).peek().tryComplete();
             AtomicInteger replayedStarts = newStartsByJob.get(replayedJob);
@@ -1008,6 +1105,35 @@ class KafkaWorkerIT {
             }
         }
         throw new AssertionError("timed out waiting for a DLQ record for " + jobId);
+    }
+
+    /**
+     * Bounded absence check: a revoked, never-dispatched job must neither be re-published as a
+     * new retry attempt nor land in the dead-letter topic. Polls briefly rather than waiting the
+     * full read-expected-count timeout, since the assertion is that nothing further arrives.
+     */
+    private static void assertNoHandoffForJob(String bootstrap, UUID jobId) throws Exception {
+        try (KafkaConsumer<byte[], byte[]> consumer =
+                     new KafkaConsumer<>(consumerProperties(bootstrap, "assert-" + UUID.randomUUID()))) {
+            consumer.subscribe(List.of(TopicProvisioner.RETRY_TOPIC, TopicProvisioner.DLQ_TOPIC));
+            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(3);
+            while (System.nanoTime() < deadline) {
+                for (var record : consumer.poll(Duration.ofMillis(200))) {
+                    JsonNode node = JSON.readTree(record.value());
+                    if (TopicProvisioner.DLQ_TOPIC.equals(record.topic())) {
+                        assertFalse(jobId.toString().equals(node.path("jobId").asText()),
+                                "the revoked rate-gate-queued job must never reach the dead-letter topic");
+                    } else {
+                        boolean republishedAsNextAttempt = jobId.toString()
+                                .equals(node.path("job").path("jobId").asText())
+                                && node.path("attempt").asInt() == 3;
+                        assertFalse(republishedAsNextAttempt,
+                                "the revoked rate-gate-queued job must never be re-published as "
+                                        + "a new retry attempt");
+                    }
+                }
+            }
+        }
     }
 
     private static JobEnvelope job(UUID id) {

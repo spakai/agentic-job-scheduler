@@ -162,6 +162,41 @@ class ImmediateJobDispatcherTest {
         System.out.println("L03 controlled trace: " + String.join(" -> ", trace));
     }
 
+    @Test
+    void queuedSourcesReturnsOnlyNeverStartedSubmissionsAndEnforcesOwnerContext() throws Exception {
+        var handler = new ControlledHandler();
+        var dispatcher = create(MAIN, 2, 10, handler);
+        var a1 = job(MAIN, 0, 10, A, 101);
+        var a2 = job(MAIN, 0, 11, A, 102);
+        var b1 = job(MAIN, 0, 12, B, 201);
+        var submissions = on(() -> List.of(
+                dispatcher.submit(a1), dispatcher.submit(a2), dispatcher.submit(b1)));
+        // a1 runs; b1 runs (different job, capacity 2); a2 is QUEUED behind a1 in its lane.
+        on(() -> {
+            assertEquals(RUNNING, dispatcher.state(submissions.get(0)));
+            assertEquals(QUEUED, dispatcher.state(submissions.get(1)));
+            assertEquals(RUNNING, dispatcher.state(submissions.get(2)));
+            assertEquals(Set.of(a2.source()), dispatcher.queuedSources(context));
+            return null;
+        });
+
+        var otherContext = vertx.getOrCreateContext();
+        assertThrows(IllegalArgumentException.class, () -> dispatcher.queuedSources(otherContext));
+
+        handler.succeed(a1);
+        await(submissions.get(0).handlerStopped());
+        // a2 has now started (no longer queued); nothing remains queued.
+        on(() -> {
+            assertEquals(RUNNING, dispatcher.state(submissions.get(1)));
+            assertEquals(Set.of(), dispatcher.queuedSources(context));
+            return null;
+        });
+        handler.succeed(a2);
+        handler.succeed(b1);
+        await(submissions.get(1).handlerStopped());
+        await(submissions.get(2).handlerStopped());
+    }
+
     @ParameterizedTest
     @EnumSource(value = OffsetCommitTracker.Completion.class,
             names = {"RETRY_ACKNOWLEDGED", "DLQ_ACKNOWLEDGED"})

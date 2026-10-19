@@ -240,6 +240,7 @@ public final class KafkaWorker {
         for (TopicPartition partition : revoked) {
             PartitionOwner owner = owners.remove(partition);
             if (owner != null) {
+                discardQueuedWork(owner);
                 enqueueCommit(owner);
                 owner.dispatcher.revokeOwnership();
             }
@@ -496,16 +497,46 @@ public final class KafkaWorker {
             while (iterator.hasNext()) {
                 ReservationGroup group = iterator.next().getValue();
                 iterator.remove();
-                group.remaining--;
-                if (group.remaining == 0) {
-                    windowController.commitAcknowledged(group.reservation)
-                            .onFailure(failure -> failWorker(
-                                    "Could not release commit-acknowledged processing reservation", failure));
-                }
+                releaseGroup(group, "Could not release commit-acknowledged processing reservation");
             }
         });
         admitPendingBatch();
         maybeFinishClose();
+    }
+
+    /**
+     * Releases a reservation group's claim on the processing window once the last record in the
+     * group has either been committed or discarded without ever running.
+     */
+    private void releaseGroup(ReservationGroup group, String failureMessage) {
+        group.remaining--;
+        if (group.remaining == 0) {
+            windowController.commitAcknowledged(group.reservation)
+                    .onFailure(failure -> failWorker(failureMessage, failure));
+        }
+    }
+
+    /**
+     * Releases the processing-window reservation for a single record that will never be
+     * committed through the normal Kafka-commit path: either it was discarded while still
+     * queued (never started), or its handler settled after the owning assignment was revoked, so
+     * the dispatcher's own completion signal was silently ignored (see
+     * {@link ImmediateJobDispatcher.Submission#handlerStopped()}).
+     */
+    private void releaseDiscardedReservation(PartitionOwner owner, SourceRecord source) {
+        ReservationGroup group = owner.reservations.remove(source.offset());
+        if (group != null) {
+            releaseGroup(group, "Could not release retired-assignment processing reservation");
+        }
+        admitPendingBatch();
+        maybeFinishClose();
+    }
+
+    /** Releases reservations for submissions discarded while still queued at revoke time. */
+    private void discardQueuedWork(PartitionOwner owner) {
+        for (SourceRecord discarded : owner.dispatcher.queuedSources(context)) {
+            releaseDiscardedReservation(owner, discarded);
+        }
     }
 
     private void resizeDispatchers() {
@@ -572,13 +603,24 @@ public final class KafkaWorker {
         resizeDispatchers();
     }
 
-    private Future<Void> executeHandler(JobExecution execution) {
+    private Future<Void> executeHandler(PartitionOwner owner, JobExecution execution) {
         long startedAt = System.nanoTime();
         Supplier<Future<Void>> operation = () -> executeHandlerWithTimeout(execution);
         Future<Void> outcome = config.role() == WorkerRole.RETRY
-                ? retryRateGate.submit(operation) : operation.get();
+                ? retryRateGate.submit(
+                        () -> !owner.dispatcher.isOwnershipRevoked(),
+                        () -> releaseDiscardedReservation(owner, execution.source()),
+                        operation)
+                : operation.get();
         if (outcome != null) {
             outcome.onComplete(result -> context.runOnContext(ignored -> {
+                if (owner.dispatcher.isOwnershipRevoked()) {
+                    // The assignment was revoked while this handler was running (or while it sat
+                    // behind the retry rate gate). The dispatcher's own completion signal is
+                    // silently ignored in that case, so nothing else will ever release this
+                    // record's processing-window reservation.
+                    releaseDiscardedReservation(owner, execution.source());
+                }
                 if (result.failed() && result.cause()
                         instanceof com.example.agenticjobscheduler.execution.PermanentJobFailure) {
                     return;
@@ -695,6 +737,7 @@ public final class KafkaWorker {
         stopping = true;
         owners.values().forEach(owner -> {
             if (!owner.dispatcher.isOwnershipRevoked()) {
+                discardQueuedWork(owner);
                 owner.dispatcher.revokeOwnership();
             }
         });
@@ -731,7 +774,7 @@ public final class KafkaWorker {
             this.partition = partition;
             dispatcher = new ImmediateJobDispatcher(context, partition.getTopic(),
                     Set.of(partition.getPartition()), 1, MAX_RETAINED_RECORDS,
-                    KafkaWorker.this::executeHandler);
+                    execution -> KafkaWorker.this.executeHandler(this, execution));
             dispatcher.setCapacity(0);
         }
     }
@@ -781,12 +824,13 @@ public final class KafkaWorker {
             this.queueLimit = queueLimit;
         }
 
-        private Future<Void> submit(Supplier<Future<Void>> operation) {
+        private Future<Void> submit(Supplier<Boolean> isValid, Runnable onInvalidated,
+                                    Supplier<Future<Void>> operation) {
             if (waiting.size() >= queueLimit) {
                 return Future.failedFuture("Retry handler start queue is full");
             }
             Promise<Void> result = Promise.promise();
-            waiting.addLast(new RateRequest(operation, result));
+            waiting.addLast(new RateRequest(isValid, onInvalidated, operation, result));
             pump();
             return result.future();
         }
@@ -812,10 +856,22 @@ public final class KafkaWorker {
         }
 
         private void startNext() {
-            if (waiting.isEmpty()) {
-                return;
+            RateRequest next = null;
+            while (next == null) {
+                if (waiting.isEmpty()) {
+                    return;
+                }
+                RateRequest candidate = waiting.removeFirst();
+                if (candidate.isValid.get()) {
+                    next = candidate;
+                } else {
+                    // The owner was revoked while this request sat behind the rate gate: never
+                    // invoke the operation and never settle its promise (no handler starts, no
+                    // outcome is fabricated); just let the caller release what it held for this.
+                    candidate.onInvalidated.run();
+                }
             }
-            RateRequest request = waiting.removeFirst();
+            final RateRequest request = next;
             lastStartNanos = System.nanoTime();
             Future<Void> operation;
             try {
@@ -837,5 +893,6 @@ public final class KafkaWorker {
         }
     }
 
-    private record RateRequest(Supplier<Future<Void>> operation, Promise<Void> result) { }
+    private record RateRequest(Supplier<Boolean> isValid, Runnable onInvalidated,
+                               Supplier<Future<Void>> operation, Promise<Void> result) { }
 }
