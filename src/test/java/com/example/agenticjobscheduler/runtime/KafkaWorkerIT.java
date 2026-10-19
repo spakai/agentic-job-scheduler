@@ -415,18 +415,30 @@ class KafkaWorkerIT {
             retry.start().toCompletionStage().toCompletableFuture().get(30, TimeUnit.SECONDS);
             try (KafkaProducer<byte[], byte[]> producer =
                          new KafkaProducer<>(producerProperties(bootstrap))) {
-                for (UUID jobId : jobIds) {
-                    byte[] key = JobRecordEncoder.key(jobId);
-                    int partition = partition(key, 2);
-                    SourceRecord source = new SourceRecord(TopicProvisioner.MAIN_TOPIC, partition, 0);
-                    JobEnvelope job = job(jobId, 3);
-                    producer.send(new ProducerRecord<>(TopicProvisioner.RETRY_TOPIC,
-                            partition, key, JobRecordEncoder.retry(job, 2, source, source,
-                            "HANDLER_FAILURE"))).get(10, TimeUnit.SECONDS);
-                }
+                UUID firstJobId = jobIds.get(0);
+                byte[] firstKey = JobRecordEncoder.key(firstJobId);
+                int firstPartition = partition(firstKey, 2);
+                SourceRecord firstSource = new SourceRecord(
+                        TopicProvisioner.MAIN_TOPIC, firstPartition, 0);
+                producer.send(new ProducerRecord<>(TopicProvisioner.RETRY_TOPIC,
+                        firstPartition, firstKey, JobRecordEncoder.retry(job(firstJobId, 3), 2,
+                        firstSource, firstSource, "HANDLER_FAILURE")))
+                        .get(10, TimeUnit.SECONDS);
+                awaitCounter(starts, 1);
+                awaitRetainedRecords(window, 1, 20);
+
+                UUID secondJobId = jobIds.get(1);
+                byte[] secondKey = JobRecordEncoder.key(secondJobId);
+                int secondPartition = partition(secondKey, 2);
+                SourceRecord secondSource = new SourceRecord(
+                        TopicProvisioner.MAIN_TOPIC, secondPartition, 0);
+                producer.send(new ProducerRecord<>(TopicProvisioner.RETRY_TOPIC,
+                        secondPartition, secondKey, JobRecordEncoder.retry(job(secondJobId, 3), 2,
+                        secondSource, secondSource, "HANDLER_FAILURE")))
+                        .get(10, TimeUnit.SECONDS);
+                awaitRetainedRecords(window, 2, 20);
             }
 
-            awaitCounter(starts, 1);
             UUID winner = startedJobIds.peek();
             UUID loser = jobIds.stream().filter(id -> !id.equals(winner)).findFirst().orElseThrow();
 
@@ -442,6 +454,82 @@ class KafkaWorkerIT {
                     "only the still-running winner's reservation remains; the invalidated loser's "
                             + "reservation must be released even though it never ran");
         } finally {
+            vertx.close().toCompletionStage().toCompletableFuture().get(10, TimeUnit.SECONDS);
+        }
+    }
+
+    /**
+     * H01: shutdown revokes the current assignment, releasing never-started queued work while
+     * retaining a running handler's reservation until that stale handler settles.
+     */
+    @Test
+    void revokedAssignmentRetiresQueuedAndSettledHandlerReservations() throws Exception {
+        String bootstrap = KAFKA.getBootstrapServers();
+        TopicProvisioner.ensureTopics(bootstrap, 1);
+
+        UUID jobId = UUID.randomUUID();
+        byte[] key = JobRecordEncoder.key(jobId);
+        int partition = partition(key, 1);
+        ProcessingWindow oldWindow = new ProcessingWindow();
+        AtomicInteger oldStarts = new AtomicInteger();
+        Promise<Void> oldHandler = Promise.promise();
+        ConcurrentLinkedQueue<Promise<Void>> replacementHandlers = new ConcurrentLinkedQueue<>();
+        AtomicInteger replacementStarts = new AtomicInteger();
+
+        Vertx vertx = Vertx.vertx();
+        KafkaWorker oldOwner = new KafkaWorker(vertx,
+                new WorkerConfig(bootstrap, WorkerRole.MAIN, 1, 1), execution -> {
+                    oldStarts.incrementAndGet();
+                    return oldHandler.future();
+                }, oldWindow, 500);
+        ProcessingWindow replacementWindow = new ProcessingWindow();
+        KafkaWorker replacement = new KafkaWorker(vertx,
+                new WorkerConfig(bootstrap, WorkerRole.MAIN, 1, 1), execution -> {
+                    Promise<Void> gate = Promise.promise();
+                    replacementHandlers.add(gate);
+                    replacementStarts.incrementAndGet();
+                    return gate.future();
+                }, replacementWindow);
+        try {
+            oldOwner.start().toCompletionStage().toCompletableFuture().get(30, TimeUnit.SECONDS);
+            try (KafkaProducer<byte[], byte[]> producer =
+                         new KafkaProducer<>(producerProperties(bootstrap))) {
+                producer.send(new ProducerRecord<>(TopicProvisioner.MAIN_TOPIC,
+                        partition, key, JobRecordEncoder.main(job(jobId))))
+                        .get(10, TimeUnit.SECONDS);
+                awaitAtLeast(oldStarts, 1, 20);
+                awaitRetainedRecords(oldWindow, 1, 20);
+
+                producer.send(new ProducerRecord<>(TopicProvisioner.MAIN_TOPIC,
+                        partition, key, JobRecordEncoder.main(job(jobId))))
+                        .get(10, TimeUnit.SECONDS);
+                awaitRetainedRecords(oldWindow, 2, 20);
+            }
+
+            oldOwner.close().toCompletionStage().toCompletableFuture().get(10, TimeUnit.SECONDS);
+            assertEquals(1, oldWindow.retainedRecords(),
+                    "revocation must retire the queued successor but retain the running handler");
+            assertEquals(1, oldStarts.get(), "the queued successor must never start under the old owner");
+
+            replacement.start().toCompletionStage().toCompletableFuture().get(30, TimeUnit.SECONDS);
+            awaitAtLeast(replacementStarts, 1, 20);
+            TopicPartition sourcePartition = new TopicPartition(TopicProvisioner.MAIN_TOPIC, partition);
+            assertEquals(-1, committedOffset(bootstrap, WorkerRole.MAIN.groupId(), sourcePartition),
+                    "the replacement must replay while the old handler is still blocked");
+
+            oldHandler.tryComplete();
+            awaitRetainedRecords(oldWindow, 0, 20);
+            assertEquals(-1, committedOffset(bootstrap, WorkerRole.MAIN.groupId(), sourcePartition),
+                    "settling the revoked handler must release its reservation without committing");
+
+            replacementHandlers.remove().tryComplete();
+            awaitAtLeast(replacementStarts, 2, 20);
+            replacementHandlers.remove().tryComplete();
+            awaitCommittedAtLeast(bootstrap, WorkerRole.MAIN.groupId(), sourcePartition, 2);
+        } finally {
+            oldHandler.tryComplete();
+            oldOwner.close().toCompletionStage().toCompletableFuture().get(10, TimeUnit.SECONDS);
+            replacement.close().toCompletionStage().toCompletableFuture().get(35, TimeUnit.SECONDS);
             vertx.close().toCompletionStage().toCompletableFuture().get(10, TimeUnit.SECONDS);
         }
     }
@@ -835,8 +923,7 @@ class KafkaWorkerIT {
     /**
      * B11: a revoked owner's late handler callback cannot dispatch or commit stale work.
      * H01: revoking a partition must also release the revoked owner's window reservations for
-     * (a) its never-started queued successor, discarded immediately at revoke, and (b) its
-     * already-running handler, released once that handler's own completion settles.
+     * its never-started queued successor, discarded immediately at revoke.
      */
     @Test
     void workerRebalanceIgnoresStaleHandlerAndReplaysOnNewOwner() throws Exception {
@@ -896,22 +983,25 @@ class KafkaWorkerIT {
             oldOwner.start().toCompletionStage().toCompletableFuture().get(30, TimeUnit.SECONDS);
             try (KafkaProducer<byte[], byte[]> producer =
                          new KafkaProducer<>(producerProperties(bootstrap))) {
+                int started = 0;
                 for (var entry : jobsByPartition.entrySet()) {
                     UUID jobId = entry.getValue();
                     byte[] key = JobRecordEncoder.key(jobId);
                     byte[] value = JobRecordEncoder.main(job(jobId));
                     producer.send(new ProducerRecord<>(TopicProvisioner.MAIN_TOPIC,
                             entry.getKey(), key, value)).get(10, TimeUnit.SECONDS);
+                    awaitAtLeast(oldStarts, ++started, 20);
                 }
-                awaitAtLeast(oldStarts, 3, 20);
                 for (UUID jobId : jobsByPartition.values()) {
                     assertEquals(1, oldStartsByJob.get(jobId).get());
                 }
                 for (var entry : jobsByPartition.entrySet()) {
                     UUID jobId = entry.getValue();
+                    int expectedRetained = oldWindow.retainedRecords() + 1;
                     producer.send(new ProducerRecord<>(TopicProvisioner.MAIN_TOPIC,
                             entry.getKey(), JobRecordEncoder.key(jobId),
                             JobRecordEncoder.main(job(jobId)))).get(10, TimeUnit.SECONDS);
+                    awaitRetainedRecords(oldWindow, expectedRetained, 20);
                 }
             }
             long retainedDeadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(20);
@@ -930,15 +1020,16 @@ class KafkaWorkerIT {
                     TopicProvisioner.MAIN_TOPIC, replayedPartition);
             assertEquals(1, newStartsByJob.get(replayedJob).get());
 
-            // H01: the revoked partition's never-started (QUEUED) successor must be released
-            // immediately, without waiting for the still-running handler to settle.
+            // H01: a queued successor's reservation must be released on revoke, before the
+            // still-running handler settles. The observed post-revoke count accounts for any
+            // other queued records discarded in the same consumer-group rebalance.
             long discardDeadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(20);
             while (oldWindow.retainedRecords() >= retainedBeforeRebalance
                     && System.nanoTime() < discardDeadline) {
                 Thread.sleep(25);
             }
-            assertEquals(retainedBeforeRebalance - 1, oldWindow.retainedRecords(),
-                    "revoking the partition must release its discarded queued successor");
+            assertTrue(oldWindow.retainedRecords() < retainedBeforeRebalance,
+                    "revoking partitions must release their discarded queued successors");
 
             oldGates.get(replayedJob).peek().tryComplete();
             Thread.sleep(500);
@@ -946,16 +1037,6 @@ class KafkaWorkerIT {
                     "revocation must prevent the old owner from starting its queued successor");
             assertEquals(-1, committedOffset(bootstrap, WorkerRole.MAIN.groupId(), topicPartition),
                     "the stale old-owner callback must not commit while the new owner is blocked");
-
-            // H01: the stale handler's completion settles after revoke; its reservation must
-            // still be released (no permanent leak) even though nothing can be committed for it.
-            long settleDeadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(20);
-            while (oldWindow.retainedRecords() >= retainedBeforeRebalance - 1
-                    && System.nanoTime() < settleDeadline) {
-                Thread.sleep(25);
-            }
-            assertEquals(retainedBeforeRebalance - 2, oldWindow.retainedRecords(),
-                    "settling the stale running handler after revoke must also release its reservation");
 
             newGates.get(replayedJob).peek().tryComplete();
             AtomicInteger replayedStarts = newStartsByJob.get(replayedJob);
@@ -1070,6 +1151,16 @@ class KafkaWorkerIT {
         }
         assertTrue(value.get() >= expected,
                 "timed out waiting for " + expected + "; observed " + value.get());
+    }
+
+    private static void awaitRetainedRecords(ProcessingWindow window, int expected,
+                                             int timeoutSeconds) throws Exception {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(timeoutSeconds);
+        while (window.retainedRecords() != expected && System.nanoTime() < deadline) {
+            Thread.sleep(25);
+        }
+        assertEquals(expected, window.retainedRecords(),
+                "timed out waiting for " + expected + " retained records");
     }
 
     private static void awaitNoActiveHandlers(AtomicInteger active) throws Exception {
