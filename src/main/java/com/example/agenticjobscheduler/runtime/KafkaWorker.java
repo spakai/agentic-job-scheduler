@@ -556,10 +556,10 @@ public final class KafkaWorker {
             active += running;
         }
         int available = Math.max(0, total - active);
-        List<PartitionOwner> busy = ordered.stream()
-                .filter(owner -> owner.dispatcher.queuedRecords(context) > 0)
+        List<PartitionOwner> runnable = ordered.stream()
+                .filter(owner -> owner.dispatcher.runnableHeads(context) > 0)
                 .toList();
-        List<PartitionOwner> recipients = busy.isEmpty() ? ordered : busy;
+        List<PartitionOwner> recipients = runnable.isEmpty() ? ordered : runnable;
         int perRecipient = recipients.isEmpty() ? 0 : available / recipients.size();
         int remainder = recipients.isEmpty() ? 0 : available % recipients.size();
         for (int index = 0; index < recipients.size(); index++) {
