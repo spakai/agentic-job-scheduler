@@ -2,17 +2,22 @@
 
 A Java 21 learning project for immediate Kafka job processing and GH-600 agent
 supervision. [Spec 002](specs/002-kafka-job-scheduling.md) defines the intended
-worker service. **Currently implemented:** L01–L05 library components, the L06 bounded
-retained-work window and Vert.x pause/resume controller, plus an executable Kafka
-main/retry worker with acknowledged retry/DLQ handoffs and explicit commits.
+worker service. **Currently implemented:** the L01–L06 runtime and the H03–H06
+hardening pass for admission fairness, startup safety, and Kafka offset
+semantics. The worker now enforces the process-wide active-handler cap,
+allocates replacement capacity only to runnable job-lane heads, refuses
+mismatched topic counts, and distinguishes new-consumer-group startup from an
+established group with invalid/out-of-range offsets.
+
 Broker evidence covers retry and failed-send recovery, retry-worker
 rate/concurrency limits and attempt progression, bounded malformed/
 oversized/wrong-partition DLQ routing, pause/poll/commit/resume, main adaptive
-limits, worker pressure, independent partition commits, and rebalance/stale
-callback handling. Compose evidence covers separate main/retry processes,
-scaling retry to two replicas, DLQ routing, and replay after Kafka broker restart.
-The B19 cancellation contract keeps the gate and source offset until the handler
-confirms it has stopped; an unconfirmed cancellation remains incomplete.
+limits, worker pressure, independent partition commits, rebalance/stale
+callback handling, and the final H03–H06 runtime assertions. Compose evidence
+covers separate main/retry processes, scaling retry to two replicas, DLQ
+routing, and replay after Kafka broker restart. The B19 cancellation contract
+keeps the gate and source offset until the handler confirms it has stopped; an
+unconfirmed cancellation remains incomplete.
 
 See the [arc42 architecture documentation](arch.md) for topic ownership,
 per-job queues, safe commits, the runtime boundary, and ADRs 1–10.

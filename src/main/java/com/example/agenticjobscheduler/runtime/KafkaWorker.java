@@ -40,6 +40,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.function.Supplier;
 import java.util.logging.Level;
 import java.util.logging.Logger;
+import org.apache.kafka.clients.admin.AdminClient;
 import org.apache.kafka.common.utils.Utils;
 
 /**
@@ -694,16 +695,40 @@ public final class KafkaWorker {
     }
 
     private Map<String, String> consumerProperties() {
-        return Map.ofEntries(
-                Map.entry("bootstrap.servers", config.bootstrapServers()),
-                Map.entry("group.id", config.role().groupId()),
-                Map.entry("enable.auto.commit", "false"),
-                Map.entry("auto.offset.reset", "earliest"),
-                Map.entry("max.poll.records", Integer.toString(MAX_FETCH_RECORDS)),
-                Map.entry("fetch.max.bytes", Long.toString(MAX_FETCH_BYTES)),
-                Map.entry("max.partition.fetch.bytes", Long.toString(MAX_FETCH_BYTES)),
-                Map.entry("key.deserializer", "org.apache.kafka.common.serialization.ByteArrayDeserializer"),
-                Map.entry("value.deserializer", "org.apache.kafka.common.serialization.ByteArrayDeserializer"));
+        Map<String, String> properties = new HashMap<>();
+        properties.put("bootstrap.servers", config.bootstrapServers());
+        properties.put("group.id", config.role().groupId());
+        properties.put("enable.auto.commit", "false");
+        properties.put("max.poll.records", Integer.toString(MAX_FETCH_RECORDS));
+        properties.put("fetch.max.bytes", Long.toString(MAX_FETCH_BYTES));
+        properties.put("max.partition.fetch.bytes", Long.toString(MAX_FETCH_BYTES));
+        properties.put("key.deserializer", "org.apache.kafka.common.serialization.ByteArrayDeserializer");
+        properties.put("value.deserializer", "org.apache.kafka.common.serialization.ByteArrayDeserializer");
+
+        if (initialOffsetPolicyUsesEarliest(config.role().groupId())) {
+            properties.put("auto.offset.reset", "earliest");
+        } else {
+            properties.put("auto.offset.reset", "none");
+        }
+        return properties;
+    }
+
+    private boolean initialOffsetPolicyUsesEarliest(String groupId) {
+        try (AdminClient admin = AdminClient.create(Map.of("bootstrap.servers", config.bootstrapServers()))) {
+            var groups = admin.listConsumerGroups().all().get(30, TimeUnit.SECONDS);
+            boolean knownGroup = groups.stream().anyMatch(group -> group.groupId().equals(groupId));
+            if (!knownGroup) {
+                return true;
+            }
+            var offsets = admin.listConsumerGroupOffsets(groupId).partitionsToOffsetAndMetadata()
+                    .get(30, TimeUnit.SECONDS);
+            return offsets.isEmpty();
+        } catch (Exception failure) {
+            LOG.log(Level.WARNING,
+                    "Could not determine Kafka offset state for group {0}; defaulting to earliest reset",
+                    groupId);
+            return true;
+        }
     }
 
     private Map<String, String> producerProperties() {

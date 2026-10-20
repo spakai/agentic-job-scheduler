@@ -1,6 +1,6 @@
 # Architecture documentation (arc42)
 
-Snapshot: 2026-10-10, L01–L06 worker-runtime work. [Spec 002](specs/002-kafka-job-scheduling.md)
+Snapshot: 2026-10-20, H03–H06 runtime hardening completed. [Spec 002](specs/002-kafka-job-scheduling.md)
 is the requirements and architecture authority; this document follows the
 [arc42](https://arc42.org) template and records decisions as ADRs (section 9).
 [Spec 001](specs/001-job-lifecycle.md) is historical.
@@ -18,7 +18,10 @@ exhausted failures go to a dead-letter queue (DLQ). Kafka records and consumer
 offsets are the only durable backlog.
 
 There is no PostgreSQL, Flyway, REST API, delayed-job timer, scheduling state
-topic, or RocksDB index. EDR is deferred.
+topic, or RocksDB index. EDR is deferred. The current runtime hardening closes
+H03–H06: enforce the process-wide active-handler limit, allocate replacement
+capacity only to runnable job-lane heads, refuse mismatched topic counts, and
+preserve correct new-group versus invalid-offset startup semantics.
 
 ### 1.2 Quality goals
 
@@ -28,7 +31,8 @@ topic, or RocksDB index. EDR is deferred.
 | 2 | Per-job exclusion | One execution per jobId at a time within a topic under stable ownership; different IDs run concurrently |
 | 3 | Bounded resources | Retained records/bytes and handler concurrency are capped; intake pauses instead of growing memory |
 | 4 | Operational independence | Main and retry workers scale, fail, and are rate-limited independently |
-| 5 | Explainable behavior | Invariants are tested at crash/commit boundaries with recorded evidence |
+| 5 | Runtime safety | Admission, fairness, and startup checks fail visibly on invalid partition or offset state rather than silently proceeding |
+| 6 | Explainable behavior | Invariants are tested at crash/commit boundaries with recorded evidence |
 
 ### 1.3 Stakeholders
 
@@ -104,6 +108,8 @@ Out of scope: HTTP clients, databases, external-effect fencing.
 | L03 | `ImmediateJobDispatcher` | Start eligible queue heads; serialize each jobId within its topic | 14 |
 | L04 | `FailureClassifier` + `AdaptiveLimiter` | Classify retryable vs exhausted/permanent failures; main-worker backpressure policy | focused unit coverage |
 | L05 | `ImmediateJobDispatcher.revokeOwnership()` | Stop admission/dispatch and ignore stale local callbacks for a revoked owner | 3 |
+| H03-H04 | `KafkaWorker` capacity redistribution + runnable-head fairness | Enforce the process-wide handler cap and allocate replacement capacity only where runnable job-lane heads exist | dispatcher + runtime assertions |
+| H05-H06 | `TopicProvisioner` and `KafkaWorker` startup policy | Refuse mismatched topic counts and preserve correct offset behavior for new vs. established groups | startup safety checks |
 | L06 | `ProcessingWindow`, `ProcessingWindowKafkaController`, `KafkaWorker` runtime | Bound intake, run main/retry roles, publish acknowledged handoffs, commit safe offsets | 5 window unit + 19 dispatcher + 5 limiter + 2 Kafka integration |
 
 These are executed cases, including parameterized inputs. L03 tests run real
@@ -239,7 +245,33 @@ and allocates the process limit across busy partitions. Main capacity adapts fro
 five-second handler-latency/failure windows; retry workers have independent
 concurrency and a per-pod one-start-per-second token bucket.
 
-### 6.3 Completion and safe-prefix commits (L02)
+The H03-H04 hardening keeps the process-wide active-handler cap authoritative for
+real starts, not just a best-effort hint. Replacement capacity is assigned only
+for partitions with runnable job-lane heads, so a blocked lane cannot continue to
+consume replacement slots while another lane is ready to progress.
+
+### 6.3 Runtime hardening: H03-H06
+
+```text
+KafkaWorker startup and resize policy
+   ├─ active handler limit checked for every real start
+   ├─ queue head fairness uses runnable heads, not queued-record count
+   ├─ topic count mismatch => fail fast, do not resize
+   └─ new group => earliest; established invalid offset => none + visible failure
+```
+
+H05 enforces fixed topic partition counts by failing startup when an existing
+main, retry, or DLQ topic has an unexpected count instead of silently expanding
+it. This protects the assignment contract in Spec 002 and keeps partition keys
+stable across service restarts.
+
+H06 preserves the Kafka offset contract for group initialization. A brand-new
+consumer group starts at `earliest`; an existing group with no valid committed
+offset or an out-of-range offset is not silently reset to an arbitrary point. It
+fails visibly, which makes the operational mismatch obvious and prevents a
+misconfigured worker from starting with a hidden offset jump.
+
+### 6.4 Completion and safe-prefix commits (L02)
 
 Kafka's committed position is a next offset per partition, not a per-record
 completion flag. Committing 13 resumes at 13; doing so while 10 is unfinished
