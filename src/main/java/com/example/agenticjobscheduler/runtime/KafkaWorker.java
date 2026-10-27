@@ -36,10 +36,14 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.TreeMap;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.function.Supplier;
 import java.util.logging.Level;
 import java.util.logging.Logger;
+import org.apache.kafka.clients.admin.AdminClient;
+import org.apache.kafka.clients.admin.OffsetSpec;
 import org.apache.kafka.common.utils.Utils;
 
 /**
@@ -131,37 +135,55 @@ public final class KafkaWorker {
         startRequested = true;
         vertx.runOnContext(ignored -> {
             context = Vertx.currentContext();
-            consumer = KafkaConsumer.create(vertx, consumerProperties(),
-                    new org.apache.kafka.common.serialization.ByteArrayDeserializer(),
-                    new org.apache.kafka.common.serialization.ByteArrayDeserializer());
-            producer = KafkaProducer.create(vertx, producerProperties(),
-                    new org.apache.kafka.common.serialization.ByteArraySerializer(),
-                    new org.apache.kafka.common.serialization.ByteArraySerializer());
-            producer.exceptionHandler(failure ->
-                    LOG.log(Level.WARNING, "Kafka producer reported an asynchronous error", failure));
-            windowController = new ProcessingWindowKafkaController(context, consumer, window);
-            consumer.partitionsAssignedHandler(this::partitionsAssigned);
-            consumer.partitionsRevokedHandler(this::partitionsRevoked);
-            loadPartitionCounts()
-                    .compose(ignoredCounts -> consumer.subscribe(config.role().topic()))
-                    .onComplete(result -> {
+            vertx.executeBlocking(this::consumerProperties, false)
+                    .onComplete(properties -> {
                         if (stopping) {
                             started.tryFail("Worker stopped during startup");
                             closeClients();
                             return;
                         }
-                        if (result.failed()) {
-                            started.tryFail(result.cause());
-                            failWorker("Could not initialize Kafka worker", result.cause());
+                        if (properties.failed()) {
+                            started.tryFail(properties.cause());
+                            failWorker("Could not determine Kafka consumer offset policy",
+                                    properties.cause());
                             return;
                         }
-                        periodicId = vertx.setPeriodic(5_000, ignoredTick ->
-                                context.runOnContext(ignoredContext -> evaluateMainLimit()));
-                        started.tryComplete();
-                        pollNext();
+                        initializeConsumer(properties.result());
                     });
         });
         return started.future();
+    }
+
+    private void initializeConsumer(Map<String, String> consumerProperties) {
+        consumer = KafkaConsumer.create(vertx, consumerProperties,
+                new org.apache.kafka.common.serialization.ByteArrayDeserializer(),
+                new org.apache.kafka.common.serialization.ByteArrayDeserializer());
+        producer = KafkaProducer.create(vertx, producerProperties(),
+                new org.apache.kafka.common.serialization.ByteArraySerializer(),
+                new org.apache.kafka.common.serialization.ByteArraySerializer());
+        producer.exceptionHandler(failure ->
+                LOG.log(Level.WARNING, "Kafka producer reported an asynchronous error", failure));
+        windowController = new ProcessingWindowKafkaController(context, consumer, window);
+        consumer.partitionsAssignedHandler(this::partitionsAssigned);
+        consumer.partitionsRevokedHandler(this::partitionsRevoked);
+        loadPartitionCounts()
+                .compose(ignoredCounts -> consumer.subscribe(config.role().topic()))
+                .onComplete(result -> {
+                    if (stopping) {
+                        started.tryFail("Worker stopped during startup");
+                        closeClients();
+                        return;
+                    }
+                    if (result.failed()) {
+                        started.tryFail(result.cause());
+                        failWorker("Could not initialize Kafka worker", result.cause());
+                        return;
+                    }
+                    periodicId = vertx.setPeriodic(5_000, ignoredTick ->
+                            context.runOnContext(ignoredContext -> evaluateMainLimit()));
+                    started.tryComplete();
+                    pollNext();
+                });
     }
 
     /** Stops intake, waits for active handler/handoff callbacks, then closes clients. */
@@ -556,10 +578,10 @@ public final class KafkaWorker {
             active += running;
         }
         int available = Math.max(0, total - active);
-        List<PartitionOwner> busy = ordered.stream()
-                .filter(owner -> owner.dispatcher.queuedRecords(context) > 0)
+        List<PartitionOwner> runnable = ordered.stream()
+                .filter(owner -> owner.dispatcher.runnableHeads(context) > 0)
                 .toList();
-        List<PartitionOwner> recipients = busy.isEmpty() ? ordered : busy;
+        List<PartitionOwner> recipients = runnable.isEmpty() ? ordered : runnable;
         int perRecipient = recipients.isEmpty() ? 0 : available / recipients.size();
         int remainder = recipients.isEmpty() ? 0 : available % recipients.size();
         for (int index = 0; index < recipients.size(); index++) {
@@ -694,16 +716,70 @@ public final class KafkaWorker {
     }
 
     private Map<String, String> consumerProperties() {
-        return Map.ofEntries(
-                Map.entry("bootstrap.servers", config.bootstrapServers()),
-                Map.entry("group.id", config.role().groupId()),
-                Map.entry("enable.auto.commit", "false"),
-                Map.entry("auto.offset.reset", "earliest"),
-                Map.entry("max.poll.records", Integer.toString(MAX_FETCH_RECORDS)),
-                Map.entry("fetch.max.bytes", Long.toString(MAX_FETCH_BYTES)),
-                Map.entry("max.partition.fetch.bytes", Long.toString(MAX_FETCH_BYTES)),
-                Map.entry("key.deserializer", "org.apache.kafka.common.serialization.ByteArrayDeserializer"),
-                Map.entry("value.deserializer", "org.apache.kafka.common.serialization.ByteArrayDeserializer"));
+        Map<String, String> properties = new HashMap<>();
+        properties.put("bootstrap.servers", config.bootstrapServers());
+        properties.put("group.id", config.role().groupId());
+        // Keep unaffected partitions active across membership changes. Range-first
+        // defaults select eager rebalancing even when cooperative is also supported.
+        properties.put("group.protocol", "classic");
+        properties.put("partition.assignment.strategy",
+                "org.apache.kafka.clients.consumer.CooperativeStickyAssignor");
+        properties.put("enable.auto.commit", "false");
+        properties.put("max.poll.records", Integer.toString(MAX_FETCH_RECORDS));
+        properties.put("fetch.max.bytes", Long.toString(MAX_FETCH_BYTES));
+        properties.put("max.partition.fetch.bytes", Long.toString(MAX_FETCH_BYTES));
+        properties.put("key.deserializer", "org.apache.kafka.common.serialization.ByteArrayDeserializer");
+        properties.put("value.deserializer", "org.apache.kafka.common.serialization.ByteArrayDeserializer");
+
+        try {
+            if (initialOffsetPolicyUsesEarliest(config.role().groupId())) {
+                properties.put("auto.offset.reset", "earliest");
+            } else {
+                properties.put("auto.offset.reset", "none");
+            }
+        } catch (ExecutionException | InterruptedException | TimeoutException failure) {
+            if (failure instanceof InterruptedException) {
+                Thread.currentThread().interrupt();
+            }
+            throw new IllegalStateException(
+                    "Could not determine committed Kafka offsets for group "
+                            + config.role().groupId() + "; refusing to start with an offset reset policy",
+                    failure);
+        }
+        return properties;
+    }
+
+    private boolean initialOffsetPolicyUsesEarliest(String groupId)
+            throws ExecutionException, InterruptedException, TimeoutException {
+        try (AdminClient admin = AdminClient.create(
+                Map.of("bootstrap.servers", config.bootstrapServers()))) {
+            var offsets = admin.listConsumerGroupOffsets(groupId).partitionsToOffsetAndMetadata()
+                    .get(30, TimeUnit.SECONDS);
+            if (offsets.isEmpty()) {
+                return true;
+            }
+
+            Map<org.apache.kafka.common.TopicPartition, OffsetSpec> beginningRequests = new HashMap<>();
+            Map<org.apache.kafka.common.TopicPartition, OffsetSpec> endRequests = new HashMap<>();
+            offsets.keySet().forEach(partition -> {
+                beginningRequests.put(partition, OffsetSpec.earliest());
+                endRequests.put(partition, OffsetSpec.latest());
+            });
+            var beginnings = admin.listOffsets(beginningRequests).all().get(30, TimeUnit.SECONDS);
+            var ends = admin.listOffsets(endRequests).all().get(30, TimeUnit.SECONDS);
+            for (var committed : offsets.entrySet()) {
+                var partition = committed.getKey();
+                long offset = committed.getValue().offset();
+                long beginning = beginnings.get(partition).offset();
+                long end = ends.get(partition).offset();
+                if (offset < beginning || offset > end) {
+                    throw new IllegalStateException("Kafka group " + groupId + " has committed offset "
+                            + offset + " for " + partition + " outside the available range ["
+                            + beginning + ", " + end + "]");
+                }
+            }
+            return false;
+        }
     }
 
     private Map<String, String> producerProperties() {

@@ -3,6 +3,7 @@ package com.example.agenticjobscheduler.runtime;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.example.agenticjobscheduler.messaging.EnvelopeValidator;
@@ -27,12 +28,14 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.apache.kafka.clients.admin.AdminClient;
 import org.apache.kafka.clients.admin.AlterConfigOp;
 import org.apache.kafka.clients.admin.ConfigEntry;
+import org.apache.kafka.clients.admin.NewTopic;
 import org.apache.kafka.common.config.ConfigResource;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.apache.kafka.clients.consumer.KafkaConsumer;
@@ -57,6 +60,99 @@ class KafkaWorkerIT {
     @Container
     private final KafkaContainer KAFKA =
             new KafkaContainer(DockerImageName.parse("apache/kafka-native:3.8.0"));
+
+    @Test
+    void topicProvisionerFailsWithoutResizingAnExistingTopic() throws Exception {
+        String bootstrap = KAFKA.getBootstrapServers();
+        try (AdminClient admin = AdminClient.create(Map.of("bootstrap.servers", bootstrap))) {
+            admin.createTopics(List.of(new NewTopic(TopicProvisioner.MAIN_TOPIC, 2, (short) 1)))
+                    .all().get(10, TimeUnit.SECONDS);
+        }
+
+        IllegalStateException failure = assertThrows(IllegalStateException.class,
+                () -> TopicProvisioner.ensureTopics(bootstrap, 3));
+        assertTrue(failure.getMessage().contains("has 2 partitions but expected 3"));
+        try (AdminClient admin = AdminClient.create(Map.of("bootstrap.servers", bootstrap))) {
+            int partitionCount = admin.describeTopics(List.of(TopicProvisioner.MAIN_TOPIC))
+                    .allTopicNames().get(10, TimeUnit.SECONDS)
+                    .get(TopicProvisioner.MAIN_TOPIC).partitions().size();
+            assertEquals(2, partitionCount, "startup must not expand an existing topic");
+        }
+    }
+
+    @Test
+    void newConsumerGroupConsumesExistingRecordsFromEarliest() throws Exception {
+        String bootstrap = KAFKA.getBootstrapServers();
+        TopicProvisioner.ensureTopics(bootstrap, 3);
+        UUID jobId = UUID.randomUUID();
+        byte[] key = JobRecordEncoder.key(jobId);
+        int partition = partition(key, 3);
+        try (KafkaProducer<byte[], byte[]> producer =
+                     new KafkaProducer<>(producerProperties(bootstrap))) {
+            producer.send(new ProducerRecord<>(TopicProvisioner.MAIN_TOPIC, partition,
+                    key, JobRecordEncoder.main(job(jobId)))).get(10, TimeUnit.SECONDS);
+        }
+
+        AtomicInteger handlerStarts = new AtomicInteger();
+        Vertx vertx = Vertx.vertx();
+        KafkaWorker worker = new KafkaWorker(vertx,
+                new WorkerConfig(bootstrap, WorkerRole.MAIN, 1, 3),
+                execution -> {
+                    handlerStarts.incrementAndGet();
+                    return Future.succeededFuture();
+                });
+        try {
+            worker.start().toCompletionStage().toCompletableFuture().get(30, TimeUnit.SECONDS);
+            awaitCounter(handlerStarts, 1);
+            awaitCommittedAtLeast(bootstrap, WorkerRole.MAIN.groupId(),
+                    new TopicPartition(TopicProvisioner.MAIN_TOPIC, partition), 1);
+        } finally {
+            worker.close().toCompletionStage().toCompletableFuture().get(35, TimeUnit.SECONDS);
+            vertx.close().toCompletionStage().toCompletableFuture().get(10, TimeUnit.SECONDS);
+        }
+    }
+
+    @Test
+    void establishedConsumerGroupWithOutOfRangeOffsetFailsStartupWithoutResetting() throws Exception {
+        String bootstrap = KAFKA.getBootstrapServers();
+        TopicProvisioner.ensureTopics(bootstrap, 3);
+        UUID jobId = UUID.randomUUID();
+        byte[] key = JobRecordEncoder.key(jobId);
+        int partition = partition(key, 3);
+        TopicPartition source = new TopicPartition(TopicProvisioner.MAIN_TOPIC, partition);
+        try (KafkaProducer<byte[], byte[]> producer =
+                     new KafkaProducer<>(producerProperties(bootstrap))) {
+            producer.send(new ProducerRecord<>(TopicProvisioner.MAIN_TOPIC, partition,
+                    key, JobRecordEncoder.main(job(jobId)))).get(10, TimeUnit.SECONDS);
+        }
+        try (AdminClient admin = AdminClient.create(Map.of("bootstrap.servers", bootstrap))) {
+            admin.alterConsumerGroupOffsets(WorkerRole.MAIN.groupId(), Map.of(
+                    source, new org.apache.kafka.clients.consumer.OffsetAndMetadata(100)))
+                    .all().get(10, TimeUnit.SECONDS);
+        }
+
+        AtomicInteger handlerStarts = new AtomicInteger();
+        Vertx vertx = Vertx.vertx();
+        KafkaWorker worker = new KafkaWorker(vertx,
+                new WorkerConfig(bootstrap, WorkerRole.MAIN, 1, 3),
+                execution -> {
+                    handlerStarts.incrementAndGet();
+                    return Future.succeededFuture();
+                });
+        try {
+            ExecutionException failure = assertThrows(ExecutionException.class,
+                    () -> worker.start().toCompletionStage().toCompletableFuture()
+                            .get(30, TimeUnit.SECONDS));
+            assertTrue(failure.getCause().getMessage().contains("outside the available range"),
+                    "startup should report the stale committed offset");
+            assertEquals(0, handlerStarts.get(), "invalid offsets must not start handlers");
+            assertEquals(100, committedOffset(bootstrap, WorkerRole.MAIN.groupId(), source),
+                    "startup must leave the established offset unchanged");
+        } finally {
+            worker.close().toCompletionStage().toCompletableFuture().get(35, TimeUnit.SECONDS);
+            vertx.close().toCompletionStage().toCompletableFuture().get(10, TimeUnit.SECONDS);
+        }
+    }
 
     @Test
     void retryHandoffAndInvalidRecordsReachTheirAcknowledgedDestinations() throws Exception {

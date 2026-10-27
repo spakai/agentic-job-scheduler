@@ -2,17 +2,22 @@
 
 A Java 21 learning project for immediate Kafka job processing and GH-600 agent
 supervision. [Spec 002](specs/002-kafka-job-scheduling.md) defines the intended
-worker service. **Currently implemented:** L01–L05 library components, the L06 bounded
-retained-work window and Vert.x pause/resume controller, plus an executable Kafka
-main/retry worker with acknowledged retry/DLQ handoffs and explicit commits.
+worker service. **Currently implemented:** the L01–L06 runtime and the H03–H06
+hardening pass for admission fairness, startup safety, and Kafka offset
+semantics. The worker now enforces the process-wide active-handler cap,
+allocates replacement capacity only to runnable job-lane heads, refuses
+mismatched topic counts, and distinguishes new-consumer-group startup from an
+established group with invalid/out-of-range offsets.
+
 Broker evidence covers retry and failed-send recovery, retry-worker
 rate/concurrency limits and attempt progression, bounded malformed/
 oversized/wrong-partition DLQ routing, pause/poll/commit/resume, main adaptive
-limits, worker pressure, independent partition commits, and rebalance/stale
-callback handling. Compose evidence covers separate main/retry processes,
-scaling retry to two replicas, DLQ routing, and replay after Kafka broker restart.
-The B19 cancellation contract keeps the gate and source offset until the handler
-confirms it has stopped; an unconfirmed cancellation remains incomplete.
+limits, worker pressure, independent partition commits, rebalance/stale
+callback handling, and the final H03–H06 runtime assertions. Compose evidence
+covers separate main/retry processes, scaling retry to two replicas, DLQ
+routing, and replay after Kafka broker restart. The B19 cancellation contract
+keeps the gate and source offset until the handler confirms it has stopped; an
+unconfirmed cancellation remains incomplete.
 
 See the [arc42 architecture documentation](arch.md) for topic ownership,
 per-job queues, safe commits, the runtime boundary, and ADRs 1–10.
@@ -35,8 +40,34 @@ Unit results are in `target/surefire-reports/`. Packaging produces
 `mvn package` run the unit suite. `mvn verify` also runs Testcontainers cases in
 `src/test/java/**/*IT.java` for pause/poll/commit/resume and worker handoff,
 partition-routing, failed retry publication recovery, and DLQ behavior. Compose
-manual checks exercise broker restart/replay; worker-process loss and unconfirmed
-handler cancellation remain unverified.
+manual checks exercise broker restart/replay. `KafkaWorkerCrashIT` verifies replay
+after child-JVM loss; `KafkaWorkerIT` covers confirmed and unconfirmed handler
+cancellation. The latest [C12 validation](docs/tasks/evidence/C12-cooperative-sticky-validation.txt)
+passed 127 unit tests and 20 Kafka integration tests. Kubernetes fault testing and
+the broader campaign remain pending; see the [chaos runbook](docs/CHAOS.md).
+
+## Partition reassignment
+
+Main and retry workers explicitly use the classic group protocol with
+`org.apache.kafka.clients.consumer.CooperativeStickyAssignor` as their sole
+partition assignor. Membership changes move partitions as needed while retaining
+unaffected partitions and their running/queued work. This reduces disruption; it
+does not pin a jobId to a pod or wait for its handler to finish before moving it.
+Static membership is not enabled. Replay and cross-owner overlap remain possible.
+
+Before a rolling upgrade, check the assignors supported by every existing member.
+Kafka 4.2's default `[RangeAssignor, CooperativeStickyAssignor]` supports removing
+Range in a rolling upgrade; a group containing Range-only members needs an
+intermediate compatible configuration or a coordinated restart. See the
+[Kafka assignor configuration](https://kafka.apache.org/42/configuration/consumer-configs/#partition.assignment.strategy).
+
+The [C12 task record](docs/tasks/C12-cooperative-sticky.md) records actual validation
+of `KafkaWorkerCooperativeIT`: both roles, repeated joins/departures, retained
+same-job lanes, broker-observed commits, and stale moved-owner outcomes. Run it
+with `mvn -B -ntp -Dit.test=KafkaWorkerCooperativeIT verify` (Docker required).
+[Spec 005](specs/005-partition-reassignment-chaos.md) tracks the wider chaos work;
+this focused test does not establish Kubernetes or full chaos acceptance. The
+[chaos runbook and acceptance ledger](docs/CHAOS.md) list runnable checks and gaps.
 
 ## GitHub Actions
 
@@ -172,12 +203,14 @@ the window.
 
 `ProcessingWindowKafkaController` applies the window signal to assigned
 partitions through Vert.x Kafka's partition-level pause/resume API. The worker
-reserves each poll batch before dispatch and releases its reservation only after
-all source records covered by that batch have acknowledged commits. The
+reserves each poll batch before dispatch. Under active ownership it releases a
+batch reservation after all covered source records have acknowledged commits;
+revoked work has separate retirement paths that do not complete its source. The
 Testcontainers-backed `ProcessingWindowKafkaIT` verifies pause/poll/commit/resume;
-`KafkaWorkerIT` exercises the running worker's handoff and DLQ path. Broker outage
-and restart remain unverified. See the
-[L06 task record](docs/tasks/L06-backpressure-recovery.md).
+`KafkaWorkerIT` exercises handoff/DLQ and broker-pause recovery; historical Compose
+checks cover broker restart. Full revoked-state retirement and outage-boundary
+coverage remain pending in the [chaos ledger](docs/CHAOS.md#acceptance-ledger).
+See the [L06 task record](docs/tasks/L06-backpressure-recovery.md) for earlier evidence.
 
 ## Kafka worker demo
 

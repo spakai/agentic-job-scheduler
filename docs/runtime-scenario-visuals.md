@@ -6,6 +6,12 @@ All diagrams are editable **Mermaid source rendered directly by GitHub**. They i
 
 ## Normal and positive scenarios
 
+Current implementation uses cooperative sticky assignment. C12 validates retained
+work with three partitions and repeated 1 → 2 → 1 member changes for both worker
+roles; it does not establish the larger deployment scenarios illustrated here.
+Consult the [chaos acceptance ledger](CHAOS.md#acceptance-ledger) for executed
+checks and pending faults, including network isolation and Kubernetes termination.
+
 ### R-P01: All 7 main pods start simultaneously on an empty group
 
 ```mermaid

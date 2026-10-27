@@ -1,0 +1,31 @@
+H05-H06 Kafka startup safety — 2026-10-21
+
+Base commit: f4588e6 (docs: update architecture for H03-H06 hardening)
+Implementation and test changes: uncommitted worktree on
+docs/h03-h06-arch-hardening.
+Environment: Java 21.0.12.1, Maven 3.6.3, Docker server 29.3.1.
+
+Focused H05/H06 broker-backed cases:
+Command:
+mvn -B -ntp '-Dit.test=KafkaWorkerIT#topicProvisionerFailsWithoutResizingAnExistingTopic+newConsumerGroupConsumesExistingRecordsFromEarliest+establishedConsumerGroupWithOutOfRangeOffsetFailsStartupWithoutResetting' verify
+Result: passed. 3 selected KafkaWorkerIT cases, 0 failures, 0 errors,
+0 skipped. The H05 mismatch case confirmed the existing topic remained at
+2 partitions instead of being expanded to the configured 3. The H06 new-group
+case consumed a record written before worker startup. The established-group
+case failed startup for committed offset 100 outside [0, 1], invoked no handler,
+and retained committed offset 100.
+
+Full clean unit and integration verification:
+Command: mvn -B -ntp clean verify
+Result: passed. Unit tests: 127, 0 failures, 0 errors, 0 skipped.
+Testcontainers integration tests: 18, 0 failures, 0 errors, 0 skipped:
+KafkaWorkerIT 16, KafkaWorkerCrashIT 1, ProcessingWindowKafkaIT 1.
+Maven result: BUILD SUCCESS.
+
+Whitespace:
+Command: git diff --check
+Result: passed after implementation, test, task-record, and evidence updates.
+
+Remaining validation gap: an AdminClient connectivity failure was not injected
+as a separate test case. Checked offset-probe failures are propagated through
+the same startup failure path rather than falling back to `earliest`.

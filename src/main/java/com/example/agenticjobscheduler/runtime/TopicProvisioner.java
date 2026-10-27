@@ -46,12 +46,12 @@ public final class TopicProvisioner {
                     .get(Duration.ofSeconds(30).toMillis(),
                             java.util.concurrent.TimeUnit.MILLISECONDS);
             for (String name : names) {
-                int existing = descriptions.get(name).partitions().size();
-                int required = name.equals(DLQ_TOPIC) ? 3 : partitions;
-                if (existing < required) {
-                    admin.createPartitions(Map.of(name, NewPartitions.increaseTo(required)))
-                            .all().get(Duration.ofSeconds(30).toMillis(),
-                                    java.util.concurrent.TimeUnit.MILLISECONDS);
+                int actual = descriptions.get(name).partitions().size();
+                int expected = name.equals(DLQ_TOPIC) ? 3 : partitions;
+                if (actual != expected) {
+                    throw new IllegalStateException(
+                            "Kafka topic " + name + " has " + actual + " partitions but expected "
+                                    + expected + "; startup refuses to resize existing topics");
                 }
             }
         }

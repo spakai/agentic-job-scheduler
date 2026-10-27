@@ -209,6 +209,19 @@ public final class ImmediateJobDispatcher {
     }
 
     /**
+     * Number of runnable job-lane heads currently eligible to start within this dispatcher.
+     * A partition with only blocked same-job predecessors is not eligible for replacement
+     * capacity, even if it still has queued records behind that head.
+     */
+    public int runnableHeads(Context ownerContext) {
+        if (ownerContext != context) {
+            throw new IllegalArgumentException("Runnable heads are available only to the owner context");
+        }
+        requireContext();
+        return (int) runnable.values().stream().filter(queue -> !queue.isEmpty()).count();
+    }
+
+    /**
      * Sources of submissions still queued (never started). Lets the owner release any
      * processing-window reservation held for work that will now be discarded instead of run,
      * such as when this dispatcher's ownership is about to be or has been revoked.
