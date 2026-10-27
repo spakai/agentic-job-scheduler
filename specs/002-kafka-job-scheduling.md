@@ -233,6 +233,12 @@ DLQ redrive is deferred; any manual redrive needs an explicit identity decision.
 
 ## 9. Rebalance, shutdown, and handler contract
 
+The worker uses classic protocol with CooperativeStickyAssignor for both roles.
+Unaffected partitions keep their local ownership during partial revocation;
+partition movement and replay are still possible. [Spec 005](005-partition-reassignment-chaos.md)
+extends the lifecycle requirements; the [chaos ledger](../docs/CHAOS.md) separates
+the passing C12 Kafka checks from pending fault and Kubernetes scenarios.
+
 On revocation stop dispatch for the revoked partitions, invalidate their local
 assignment generation, cancel/drain work within a bounded deadline, and discard
 late callbacks from that generation. Commit only completed prefixes while still

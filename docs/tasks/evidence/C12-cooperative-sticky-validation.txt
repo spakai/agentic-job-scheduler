@@ -1,0 +1,85 @@
+C12 cooperative sticky assignment — 2026-10-27
+Base commit: f4588e6b08ed287cff9da83d9e03ade7938617d2
+Branch: feat/cooperative-sticky-rebalance
+Uncommitted working tree includes pre-existing H03–H06 changes.
+Java 21.0.12.1; Maven 3.6.3; Docker server 29.3.1; Kafka client 4.2.0; Vert.x 5.2.1.
+Kafka test image: apache/kafka-native:3.8.0 (single broker).
+No production deployment, Kubernetes run, or broad chaos campaign performed.
+
+Validated source SHA-256:
+f06b323f450ba35347b9d80d2a54a5e8adddba342735c040331631f9a4c38cba  pom.xml
+8bc6ada8db65e87d77bed81e84f6eab6c4175661583d67e8c2808e1cbf50a46e  src/main/java/com/example/agenticjobscheduler/runtime/KafkaWorker.java
+3b5f6fae663d62539ca6dc178624aaa0b151a88264c1333cbeea8dff0920f5e3  src/test/java/com/example/agenticjobscheduler/runtime/KafkaWorkerCooperativeIT.java
+e4e1c730788c9bd761bde44286fc90bf6d08916fc6415d001c5a2afc12f1f6c4  src/test/java/com/example/agenticjobscheduler/runtime/KafkaWorkerIT.java
+Tracked working diff SHA-256 at validation: 1c6f46d3581f768317b4f26bc5c4a35a596941f5e888ea5524019bec101ace36
+
+Command: mvn -B -ntp -Dit.test=KafkaWorkerCooperativeIT verify
+Exit code: 0
+[INFO] Tests run: 77, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.578 s -- in com.example.agenticjobscheduler.messaging.EnvelopeValidatorTest
+[INFO] Tests run: 2, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.006 s -- in com.example.agenticjobscheduler.runtime.WorkerConfigTest
+[INFO] Tests run: 5, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.034 s -- in com.example.agenticjobscheduler.execution.L04RetryAndLimiterTest
+[INFO] Tests run: 21, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.400 s -- in com.example.agenticjobscheduler.execution.ImmediateJobDispatcherTest
+[INFO] Tests run: 17, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.051 s -- in com.example.agenticjobscheduler.execution.OffsetCommitTrackerTest
+[INFO] Tests run: 5, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.007 s -- in com.example.agenticjobscheduler.execution.ProcessingWindowTest
+[INFO] Tests run: 127, Failures: 0, Errors: 0, Skipped: 0
+[INFO] Building jar: /home/spakai/agentic-job-scheduler/target/agentic-job-scheduler-0.1.0-SNAPSHOT.jar
+[INFO] Tests run: 2, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 43.73 s -- in com.example.agenticjobscheduler.runtime.KafkaWorkerCooperativeIT
+[INFO] Tests run: 2, Failures: 0, Errors: 0, Skipped: 0
+[INFO] BUILD SUCCESS
+[INFO] Total time:  49.633 s
+[INFO] Finished at: 2026-10-27T15:11:17+08:00
+
+Command: mvn -B -ntp test
+Exit code: 0
+[INFO] Tests run: 77, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.415 s -- in com.example.agenticjobscheduler.messaging.EnvelopeValidatorTest
+[INFO] Tests run: 2, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.004 s -- in com.example.agenticjobscheduler.runtime.WorkerConfigTest
+[INFO] Tests run: 5, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.006 s -- in com.example.agenticjobscheduler.execution.L04RetryAndLimiterTest
+[INFO] Tests run: 21, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.281 s -- in com.example.agenticjobscheduler.execution.ImmediateJobDispatcherTest
+[INFO] Tests run: 17, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.036 s -- in com.example.agenticjobscheduler.execution.OffsetCommitTrackerTest
+[INFO] Tests run: 5, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.007 s -- in com.example.agenticjobscheduler.execution.ProcessingWindowTest
+[INFO] Tests run: 127, Failures: 0, Errors: 0, Skipped: 0
+[INFO] BUILD SUCCESS
+[INFO] Total time:  2.026 s
+[INFO] Finished at: 2026-10-27T15:11:31+08:00
+
+Command: mvn -B -ntp package
+Exit code: 0
+[INFO] Tests run: 77, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.481 s -- in com.example.agenticjobscheduler.messaging.EnvelopeValidatorTest
+[INFO] Tests run: 2, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.005 s -- in com.example.agenticjobscheduler.runtime.WorkerConfigTest
+[INFO] Tests run: 5, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.006 s -- in com.example.agenticjobscheduler.execution.L04RetryAndLimiterTest
+[INFO] Tests run: 21, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.309 s -- in com.example.agenticjobscheduler.execution.ImmediateJobDispatcherTest
+[INFO] Tests run: 17, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.033 s -- in com.example.agenticjobscheduler.execution.OffsetCommitTrackerTest
+[INFO] Tests run: 5, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.005 s -- in com.example.agenticjobscheduler.execution.ProcessingWindowTest
+[INFO] Tests run: 127, Failures: 0, Errors: 0, Skipped: 0
+[INFO] BUILD SUCCESS
+[INFO] Total time:  2.141 s
+[INFO] Finished at: 2026-10-27T15:11:45+08:00
+
+Command: mvn -B -ntp clean verify
+Exit code: 0
+[INFO] Tests run: 77, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.385 s -- in com.example.agenticjobscheduler.messaging.EnvelopeValidatorTest
+[INFO] Tests run: 2, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.003 s -- in com.example.agenticjobscheduler.runtime.WorkerConfigTest
+[INFO] Tests run: 5, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.007 s -- in com.example.agenticjobscheduler.execution.L04RetryAndLimiterTest
+[INFO] Tests run: 21, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.299 s -- in com.example.agenticjobscheduler.execution.ImmediateJobDispatcherTest
+[INFO] Tests run: 17, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.034 s -- in com.example.agenticjobscheduler.execution.OffsetCommitTrackerTest
+[INFO] Tests run: 5, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.006 s -- in com.example.agenticjobscheduler.execution.ProcessingWindowTest
+[INFO] Tests run: 127, Failures: 0, Errors: 0, Skipped: 0
+[INFO] Building jar: /home/spakai/agentic-job-scheduler/target/agentic-job-scheduler-0.1.0-SNAPSHOT.jar
+[INFO] Tests run: 16, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 108.5 s -- in com.example.agenticjobscheduler.runtime.KafkaWorkerIT
+[INFO] Tests run: 2, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 39.48 s -- in com.example.agenticjobscheduler.runtime.KafkaWorkerCooperativeIT
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 47.88 s -- in com.example.agenticjobscheduler.runtime.KafkaWorkerCrashIT
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 2.171 s -- in com.example.agenticjobscheduler.execution.ProcessingWindowKafkaIT
+[INFO] Tests run: 20, Failures: 0, Errors: 0, Skipped: 0
+[INFO] BUILD SUCCESS
+[INFO] Total time:  03:22 min
+[INFO] Finished at: 2026-10-27T15:15:15+08:00
+
+C12 assertions (each role, two join/leave cycles):
+- Broker reports cooperative-sticky, stable group membership and unique assignment coverage.
+- Original retained handler futures release their same-job successors without head replay.
+- Retained partitions commit while moved replacement heads stay blocked.
+- Late moved-owner settlement does not commit or dispatch its queued successor.
+- Replacement completes replay and both windows return to zero.
+- Returning partitions process the next cycle after newcomer departure.
+No observed test failures; expected negative-case handler/send/startup warnings are not suite failures.
+git diff --check and local documentation link checks passed.

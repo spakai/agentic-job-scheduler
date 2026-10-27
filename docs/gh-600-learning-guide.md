@@ -177,10 +177,10 @@ grant broad permissions merely to make a failing workflow turn green.
 
 | Item | Current status |
 | --- | --- |
-| Kafka architectural specification | Simplified for immediate main/retry processing; runtime not implemented |
+| Kafka architectural specification | Spec 002 runtime implemented; Spec 003 hardening and Spec 005 chaos requirements have remaining gaps tracked in the [chaos ledger](CHAOS.md) |
 | Learning workflow and templates | Written; exercises not yet run |
 | Runtime implementation / Maven build | Executable main/retry runtime implemented; L06 B06–B20 acceptance has test or demo evidence; see [L06 task record](tasks/L06-backpressure-recovery.md) |
-| Actual automated evaluations and scans | Full `mvn -B -ntp clean verify` passed: 126 unit tests and 13 Testcontainers integrations; dependency scan evidence is in the L06 task record |
+| Actual automated evaluations and scans | Latest [C12 clean validation](tasks/evidence/C12-cooperative-sticky-validation.txt) passed 127 unit tests and 20 Kafka integrations on the recorded working tree. Earlier dependency scan evidence remains in L06; no new scan or Kubernetes campaign claimed |
 | Copilot/MCP setup and permissions exercise | Not verified |
 | Fresh-session memory exercise | L03 durable handoff/drift check prepared; actual fresh-session resumption not run |
 | Multi-agent exercise | Not run |

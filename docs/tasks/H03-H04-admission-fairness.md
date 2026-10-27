@@ -1,6 +1,6 @@
 # Task <H03-H04>: enforce process-wide admission and fair runnable-head scheduling
 
-Status: in progress
+Status: complete
 
 ## Scope and plan
 
@@ -20,13 +20,15 @@ Record dated facts and links. Identify superseded decisions. Do not copy hidden 
 - 2026-10-20: narrowed the remaining fix to the worker/dispatcher admission boundary and fairness policy, matching Spec 003 H03-H04 requirements.
 - 2026-10-20: confirmed the root cause was capacity allocation based on `queuedRecords()` instead of `runnableHeads()`, which allowed blocked same-job lanes to receive replacement capacity.
 - 2026-10-20: kept the fix within the existing dispatcher/owner structure and avoided broad runtime or architecture changes.
+- 2026-10-21: validated commit `f4588e6`; the focused dispatcher suite passed all 21 tests, and the package build completed successfully.
 
 ## Evaluation
 
 | Check | Commit | Command or workflow | Result | Evidence |
 | --- | --- | --- | --- | --- |
-| dispatcher unit behavior | current worktree | `mvn test -Dtest=com.example.agenticjobscheduler.execution.ImmediateJobDispatcherTest -q` | pending | targeted dispatcher assertions |
-| artifact compile | current worktree | `mvn -q -DskipTests package` | pending | Maven package build |
+| dispatcher unit behavior | `f4588e6` | `mvn test -Dtest=com.example.agenticjobscheduler.execution.ImmediateJobDispatcherTest -q` | passed; 21 tests, 0 failures, 0 errors, 0 skipped | `target/surefire-reports/com.example.agenticjobscheduler.execution.ImmediateJobDispatcherTest.txt` |
+| artifact compile | `f4588e6` | `mvn -q -DskipTests package` | passed; built `target/agentic-job-scheduler-0.1.0-SNAPSHOT.jar` | `target/agentic-job-scheduler-0.1.0-SNAPSHOT.jar` |
+| whitespace | `f4588e6` | `git diff --check` | passed | no whitespace errors |
 
 ## Failure analysis and correction
 
@@ -34,14 +36,14 @@ Record dated facts and links. Identify superseded decisions. Do not copy hidden 
 - Classification: requirement / reasoning
 - Root cause supported by evidence: `KafkaWorker.resizeDispatchers()` was selecting recipients via `queuedRecords(context) > 0`, while the contract requires fairness based on `runnableHeads(context)`.
 - Code, instruction, or tool change: allocate capacity only to partitions with runnable heads, leaving blocked partitions out of the recipient set unless no runnable work exists.
-- Rerun and remaining uncertainty: rerun the focused dispatcher suite and package build to confirm the repaired fairness boundary.
+- Rerun and remaining uncertainty: focused dispatcher tests and package build passed on `f4588e6`. These checks validate unit behavior and compilation; they do not provide Kafka integration evidence.
 
 ## Handoff and review
 
-- Latest verified commit and working-tree changes: working tree contains the H03/H04 patch in `KafkaWorker.resizeDispatchers()` and `ImmediateJobDispatcher.runnableHeads()`.
-- Completed steps: root-cause analysis and focused code fix.
-- Next concrete step: run the targeted Maven validation checks and verify there are no regressions in dispatcher semantics.
-- Open risks/decisions and owner: none beyond keeping the fix strictly within the existing Kafka-only runtime contract.
+- Latest verified commit and working-tree changes: H03/H04 implementation was validated on `f4588e6`; its validation record remains uncommitted alongside the separate H05/H06 work now underway.
+- Completed steps: root-cause analysis, focused code fix, dispatcher unit validation, package build, and whitespace check.
+- Next concrete step: none for H03/H04; Kafka integration scenarios remain outside this task's validation scope.
+- Open risks/decisions and owner: Kafka integration behavior was not exercised by these checks.
 - Reviewer findings and disposition: pending.
 - PR / final outcome: pending.
 

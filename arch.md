@@ -130,7 +130,13 @@ Runtime classes (`runtime/`): `WorkerMain` (one role per process), `KafkaWorker`
 ### 5.2 Level 2: worker verticle and partition ownership
 
 Four partitions are shown for clarity; Spec 002 defaults main and retry to
-twelve. Assignment is broker-managed and changes during rebalances.
+twelve. Assignment is broker-managed and changes during rebalances. Both roles
+explicitly use classic protocol with CooperativeStickyAssignor only, preserving
+unaffected partition owners during partial revocation. This does not pin job IDs
+to pods or fence a moved partition's old external effects. Static membership is
+deferred. The [C12 task record](docs/tasks/C12-cooperative-sticky.md) records the
+broker-backed continuity checks and their results; the broader
+[Spec 005](specs/005-partition-reassignment-chaos.md) chaos matrix remains separate.
 
 ```text
 Producer: key = canonical jobId
@@ -510,8 +516,8 @@ partitions. A rebalance changes ownership, not the number of Kafka records.
 4. Existing owners cease admission on revoked partitions. The new owner
    resumes from **committed next offsets**, rebuilds in-memory per-job gates,
    and reprocesses any delivered-but-uncommitted records.
-5. Other partitions continue or briefly pause according to the rebalance
-   protocol. Capacity may improve because one previously double-assigned
+5. Cooperative sticky assignment preserves unaffected partition owners and their
+   local work; this is not a zero-pause latency guarantee. Capacity may improve because one previously double-assigned
    worker gives up a partition, but total throughput is **not guaranteed**
    to improve if downstream limits dominate.
 6. **Critical negative case:** an old handler still producing effects after
@@ -573,8 +579,10 @@ verify retained records are either safely committed or replayed, never skipped.
 
 **R-T08 — Repeated 7 → 8 → 7 autoscaling while jobs run.** [View diagram](docs/runtime-scenario-visuals.md#r-t08-repeated-7-8-7-autoscaling-while-jobs-run)
 Measure rebalance thrashing, replay count, duplicate effect attempts, stall
-duration, and useful throughput. Apply scale-down stabilization and consider
-cooperative assignment/static membership only with explicit test evidence.
+duration, and useful throughput. Cooperative assignment is now configured and
+validated in C12 at three partitions and repeated 1 → 2 → 1 membership changes.
+This larger autoscaling scenario, stabilization policy, and static membership
+remain unvalidated; see the [chaos ledger](docs/CHAOS.md).
 
 **R-T09 — Two pod failures during the same busy hour (7 → 5).** [View diagram](docs/runtime-scenario-visuals.md#r-t09-two-pod-failures-during-the-same-busy-hour-7-5)
 All 13 partitions remain assigned if five consumers survive, but balanced
@@ -881,18 +889,22 @@ handling or the required DLQ acknowledgment (B01/B05/B17).
 
 | Area | Status |
 | --- | --- |
-| Rebalance ownership and stale-callback behavior in the live worker | Unverified (library boundary only) |
-| B15: out-of-order completion across independent Kafka partitions at worker level | Covered by `KafkaWorkerIT` (permanent: `PERMANENT_HANDLER_FAILURE`, one run, source committed after DLQ; exhausted maxAttempts=2: `ATTEMPTS_EXHAUSTED` via retry worker, no third attempt) |
-| B07/B13: controlled runtime limiter and retry-rate behavior | Not covered at worker level |
-| B08: retry exhaustion and permanent failure through the worker to the DLQ | Not covered |
+| Rebalance ownership and stale-callback behavior in the live worker | `KafkaWorkerIT` covers moved-owner replay/stale handlers; `KafkaWorkerCooperativeIT` covers retained-lane continuity for both roles. Full lifecycle gaps remain in Spec 005 C06–C11 |
+| B15: out-of-order completion across independent Kafka partitions at worker level | `mainWorkerCommitsIndependentPartitionWhileEarlierOffsetIsRunning` covers independent progress; offset gaps and prefix ordering also have tracker unit tests |
+| B07/B13: controlled runtime limiter and retry-rate behavior | Worker-level rate/concurrency and adaptive-window tests pass; retired-owner permit accounting remains C10 work |
+| B08: retry exhaustion and permanent failure through the worker to the DLQ | `permanentAndExhaustedFailuresReachDlqBeforeSourceCompletes` passes |
 | B09/B20: replay after real worker process loss | Covered by `KafkaWorkerCrashIT` (child JVM SIGKILLed mid-handler; source uncommitted; replacement replays once and commits). Compose-level kill demo not run |
-| B19: confirmed and unconfirmed handler cancellation | Not covered |
-| Sustained broker outage (client behavior) | Not tested; only a persistent-volume restart was exercised manually |
+| B19: confirmed and unconfirmed handler cancellation | Worker timeout, unconfirmed cancellation, and shutdown-wait tests pass; forced Kubernetes grace remains pending |
+| Broker outage (client behavior) | Three-second broker-pause/recovery test passes; historical Compose evidence covers restart. Full outage-boundary matrix and replicated availability are unproven |
+| Kubernetes and seeded chaos | No fixture/campaign delivered by C12; see the [C01–C15 ledger](docs/CHAOS.md#acceptance-ledger) |
 | Retention expiry of unprocessed records | Documented risk; monitoring not implemented |
 | Fresh-session learning exercise | L03 handoff prepared; resumption pending |
 
-L06 stays open until these are covered; see the
-[L06 task record](docs/tasks/L06-backpressure-recovery.md). Basic
+The older “unverified” entries above are superseded by the
+[C12 clean regression evidence](docs/tasks/evidence/C12-cooperative-sticky-validation.txt):
+127 unit and 20 Kafka integration tests passed on the recorded working tree.
+Historical L06 evidence remains in the [L06 task record](docs/tasks/L06-backpressure-recovery.md).
+Passing these cases does not close the wider Spec 003/005 requirements. Basic
 [GitHub Actions CI](.github/workflows/maven.yml) runs unit tests/package; required-check
 merge enforcement is a separate repository setting.
 
