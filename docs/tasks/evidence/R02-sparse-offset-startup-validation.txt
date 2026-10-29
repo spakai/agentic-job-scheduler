@@ -1,0 +1,34 @@
+R02 sparse-offset startup validation
+Date: 2026-10-29 (Asia/Kuala_Lumpur)
+Branch: fix/sparse-consumer-offset-startup
+Base: a6781ab4480aa6a6fb986d82edba63287c94f159
+Worktree: includes inherited, uncommitted R01 remaining-attempts and failure-demo changes.
+
+Acceptance behavior exercised:
+- Main and retry consumer groups restart with an offset committed on partition 0
+  and missing offsets on partitions 1 and 2.
+- The restarted workers consume pending records from the missing partitions;
+  the previously completed record is not invoked again and partition 0 remains
+  committed at offset 1.
+- A new record is handled on the initially empty partition after initialization.
+- An established group with committed offset 100 while the available range is
+  [0, 1] fails startup, runs no handler, and retains offset 100.
+
+Checks:
+
+1. `mvn -B -ntp '-Dit.test=KafkaWorkerIT#restartedGroupReadsMissingOffsetsWithoutReplayingCommittedRecords+establishedConsumerGroupWithOutOfRangeOffsetFailsStartupWithoutResetting' verify`
+   PASS. 132 unit tests and 3 Kafka integration invocations passed (the sparse
+   restart test ran for both WorkerRole values, plus the out-of-range negative
+   control). The logs confirmed only missing partitions were initialized.
+2. `mvn -B -ntp verify`
+   PASS. 132 unit tests and all 22 Kafka/Testcontainers integration tests passed;
+   zero failures, errors, or skips.
+3. `mvn -B -ntp test`
+   PASS. 132 tests; zero failures, errors, or skips.
+4. `mvn -B -ntp package`
+   PASS. 132 tests passed and the project JAR was built.
+5. `git diff --check`
+   PASS.
+
+No commit, push, manual offset reset, topic recreation, or Compose rerun was
+performed for R02. Existing R01 Compose evidence remains separate.

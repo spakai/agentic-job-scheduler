@@ -17,7 +17,8 @@ public record JobExecution(SourceRecord source, JobEnvelope job, int attempt,
         Objects.requireNonNull(cancellation, "cancellation");
         Objects.requireNonNull(job.jobId(), "jobId");
         Objects.requireNonNull(job.executionId(), "executionId");
-        if (attempt < 1 || attempt > job.maxAttempts()) {
+        if (attempt < 1 || job.remainingAttempts() < 1
+                || attempt > 101 - job.remainingAttempts()) {
             throw new IllegalArgumentException("Invalid attempt");
         }
     }

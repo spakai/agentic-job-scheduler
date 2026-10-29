@@ -28,7 +28,7 @@ class EnvelopeValidatorTest {
         assertEquals(UUID.fromString(JOB_ID), result.jobId());
         assertEquals(UUID.fromString(EXECUTION_ID), result.executionId());
         assertEquals(input.get("payload"), result.payload());
-        assertEquals(3, result.maxAttempts());
+        assertEquals(3, result.remainingAttempts());
         assertEquals(1, result.schemaVersion());
         assertEquals("demo.echo", result.jobType());
         result.payload().put("mutated", true);
@@ -40,15 +40,15 @@ class EnvelopeValidatorTest {
     @ValueSource(ints = {1, 100})
     void acceptsAttemptBoundaries(int attempts) {
         assertEquals(attempts, validator.validateMain(KEY,
-                bytes(main().put("maxAttempts", attempts).toString())).maxAttempts());
+                bytes(main().put("remainingAttempts", attempts).toString())).remainingAttempts());
     }
 
     @ParameterizedTest
     @ValueSource(strings = {"0", "101", "-1", "3.0", "3e0", "\"3\"", "true", "null",
             "2147483648", "99999999999999999999999999999"})
-    void rejectsInvalidMaxAttemptsWithoutCoercion(String literal) throws Exception {
+    void rejectsInvalidRemainingAttemptsWithoutCoercion(String literal) throws Exception {
         ObjectNode input = main();
-        input.set("maxAttempts", JSON.readTree(literal));
+        input.set("remainingAttempts", JSON.readTree(literal));
         rejectMain(input, INVALID_FIELD);
     }
 
@@ -62,7 +62,7 @@ class EnvelopeValidatorTest {
     }
 
     @ParameterizedTest
-    @ValueSource(strings = {"scheduledAt", "notBefore", "attempt", "unknown", "job"})
+    @ValueSource(strings = {"scheduledAt", "notBefore", "attempt", "unknown", "job", "maxAttempts"})
     void rejectsUnknownOrSchedulingFields(String field) {
         rejectMain(main().put(field, "secret"), UNKNOWN_FIELD);
     }
@@ -151,7 +151,7 @@ class EnvelopeValidatorTest {
 
     @Test
     void validMainAtNestingBoundaryCanStillBeWrappedForRetry() {
-        ObjectNode job = main().put("maxAttempts", 3);
+        ObjectNode job = main().put("remainingAttempts", 3);
         var array = job.withObject("payload").putArray("nested");
         for (int i = 1; i < 98; i++) {
             array = array.addArray();
@@ -167,7 +167,7 @@ class EnvelopeValidatorTest {
     void acceptsFirstRetryAndPreservesOriginalJob() {
         RetryEnvelope result = validator.validateRetry(KEY, bytes(retry().toString()));
         assertEquals(2, result.attempt());
-        assertEquals(3, result.job().maxAttempts());
+        assertEquals(2, result.job().remainingAttempts());
         assertEquals(UUID.fromString(JOB_ID), result.job().jobId());
         assertEquals(UUID.fromString(EXECUTION_ID), result.job().executionId());
         assertEquals(new SourceRecord("jobs.main.v1", 0, 42), result.originalSource());
@@ -178,6 +178,7 @@ class EnvelopeValidatorTest {
     @Test
     void acceptsLaterRetryWithNewFailedSourceAndStableOriginalSource() {
         ObjectNode input = retry().put("attempt", 3);
+        ((ObjectNode) input.get("job")).put("remainingAttempts", 1);
         SourceRecord failed = new SourceRecord("jobs.retry.v1", 2, Long.MAX_VALUE);
         input.set("failedSource", source(failed));
         input.put("handoffId", EnvelopeValidator.handoffId(failed, 3));
@@ -188,7 +189,7 @@ class EnvelopeValidatorTest {
     }
 
     @ParameterizedTest
-    @ValueSource(strings = {"1", "0", "4", "null", "2.0", "\"2\"", "2147483648"})
+    @ValueSource(strings = {"1", "0", "100", "null", "2.0", "\"2\"", "2147483648"})
     void rejectsInvalidRetryAttempts(String literal) throws Exception {
         ObjectNode input = retry();
         input.set("attempt", JSON.readTree(literal));
@@ -211,14 +212,25 @@ class EnvelopeValidatorTest {
         rejectRetry(input, UNKNOWN_FIELD);
         rejectRetry(retry().put("notBefore", "tomorrow"), UNKNOWN_FIELD);
         input = retry();
-        ((ObjectNode) input.get("job")).remove("maxAttempts");
+        ((ObjectNode) input.get("job")).remove("remainingAttempts");
         rejectRetry(input, INVALID_FIELD);
         input = retry();
-        ((ObjectNode) input.get("job")).put("maxAttempts", 1);
+        ((ObjectNode) input.get("job")).put("remainingAttempts", 0);
         rejectRetry(input, INVALID_FIELD);
         input = retry();
         ((ObjectNode) input.get("job")).put("attempt", 1);
         rejectRetry(input, UNKNOWN_FIELD);
+    }
+
+    @Test
+    void acceptsFinalRetryAndRejectsBudgetBeyondOriginalLimit() {
+        ObjectNode input = retry();
+        ((ObjectNode) input.get("job")).put("remainingAttempts", 1);
+        assertEquals(1, validator.validateRetry(KEY, bytes(input.toString())).job().remainingAttempts());
+        ((ObjectNode) input.get("job")).put("remainingAttempts", 100);
+        rejectRetry(input, INVALID_FIELD);
+        ((ObjectNode) input.get("job")).put("remainingAttempts", 99);
+        assertDoesNotThrow(() -> validator.validateRetry(KEY, bytes(input.toString())));
     }
 
     @Test
@@ -298,7 +310,7 @@ class EnvelopeValidatorTest {
         SourceRecord original = new SourceRecord("jobs.main.v1", 0, 42);
         ObjectNode node = JSON.createObjectNode();
         node.put("schemaVersion", 1);
-        node.set("job", main().put("maxAttempts", 3));
+        node.set("job", main().put("remainingAttempts", 2));
         node.put("attempt", 2).put("handoffId", EnvelopeValidator.handoffId(original, 2));
         node.set("originalSource", source(original));
         node.set("failedSource", source(original));

@@ -1,0 +1,45 @@
+R01 remainingAttempts validation
+Date: 2026-10-29 (Asia/Kuala_Lumpur)
+Base: a6781ab4480aa6a6fb986d82edba63287c94f159 plus uncommitted feat/remaining-attempts-envelope diff
+
+mvn -B -ntp test: initial run 130 tests, one stale assertion failed; corrected budget-bound negative case.
+mvn -B -ntp test: rerun PASS, 130 tests, zero failures/errors/skips.
+mvn -B -ntp package: PASS, 130 tests; library JAR produced.
+mvn -B -ntp verify: FAIL, 130 unit tests pass; 20 integration tests, 19 pass, one topic-provisioning timeout, no skips.
+
+Per-case integration results from the full run:
+PASS com.example.agenticjobscheduler.execution.ProcessingWindowKafkaIT.vertxConsumerPausesWhilePollingAndResumesAfterCommitAcknowledgement
+PASS com.example.agenticjobscheduler.runtime.KafkaWorkerCooperativeIT.retainedPartitionsProgressWithoutReplayingAcrossRepeatedJoinsAndLeaves(WorkerRole)[1]
+PASS com.example.agenticjobscheduler.runtime.KafkaWorkerCooperativeIT.retainedPartitionsProgressWithoutReplayingAcrossRepeatedJoinsAndLeaves(WorkerRole)[2]
+PASS com.example.agenticjobscheduler.runtime.KafkaWorkerCrashIT.killedWorkerProcessLeavesSourceUncommittedAndReplacementReplaysIt
+PASS com.example.agenticjobscheduler.runtime.KafkaWorkerIT.mainWorkerAdaptsConcurrencyFromMeasuredHandlerWindows
+PASS com.example.agenticjobscheduler.runtime.KafkaWorkerIT.newConsumerGroupConsumesExistingRecordsFromEarliest
+PASS com.example.agenticjobscheduler.runtime.KafkaWorkerIT.timedOutHandlerRetriesAndReleasesGateOnlyAfterStopConfirmation
+PASS com.example.agenticjobscheduler.runtime.KafkaWorkerIT.retryWorkerEnforcesConfiguredRateAndConcurrencyAndAdvancesAttempts
+PASS com.example.agenticjobscheduler.runtime.KafkaWorkerIT.establishedConsumerGroupWithOutOfRangeOffsetFailsStartupWithoutResetting
+PASS com.example.agenticjobscheduler.runtime.KafkaWorkerIT.mainWorkerCommitsIndependentPartitionWhileEarlierOffsetIsRunning
+PASS com.example.agenticjobscheduler.runtime.KafkaWorkerIT.workerShutdownWaitsForUnconfirmedHandlerBeforeCommittingSource
+PASS com.example.agenticjobscheduler.runtime.KafkaWorkerIT.topicProvisionerFailsWithoutResizingAnExistingTopic
+PASS com.example.agenticjobscheduler.runtime.KafkaWorkerIT.workerRecoversCommitsAndPollingAfterKafkaBrokerOutage
+PASS com.example.agenticjobscheduler.runtime.KafkaWorkerIT.handlerFailuresConsumeRemainingBudgetBeforeDlq
+PASS com.example.agenticjobscheduler.runtime.KafkaWorkerIT.mainWorkerRetainsAndResumesSameJobBacklogAtWindowWatermark
+PASS com.example.agenticjobscheduler.runtime.KafkaWorkerIT.unconfirmedHandlerCancellationKeepsGateAndOffsetIncomplete
+PASS com.example.agenticjobscheduler.runtime.KafkaWorkerIT.retryHandoffAndInvalidRecordsReachTheirAcknowledgedDestinations
+PASS com.example.agenticjobscheduler.runtime.KafkaWorkerIT.revokedOwnershipInvalidatesRateGateQueuedRetryBeforeItEverDispatches
+PASS com.example.agenticjobscheduler.runtime.KafkaWorkerIT.revokedAssignmentRetiresQueuedAndSettledHandlerReservations
+ERROR com.example.agenticjobscheduler.runtime.KafkaWorkerIT.workerRebalanceIgnoresStaleHandlerAndReplaysOnNewOwner
+
+Timeout: KafkaWorkerIT.workerRebalanceIgnoresStaleHandlerAndReplaysOnNewOwner
+java.util.concurrent.TimeoutException at TopicProvisioner.ensureTopics:37 (AdminClient.createTopics), before worker execution.
+No implementation change made for this startup timeout.
+Focused rerun command:
+  mvn -B -ntp -Dit.test=KafkaWorkerIT#workerRebalanceIgnoresStaleHandlerAndReplaysOnNewOwner verify
+Result: PASS, 130 units and 1 integration test, zero failures/errors/skips; 17.200 s.
+Log: /tmp/remaining-attempts-rebalance-rerun.log
+All 20 integration cases passed across the full run plus focused rerun, not in one clean full run.
+Underlying cause of the initial broker provisioning timeout was not established.
+
+git diff --check: PASS.
+No dependency changes, scan, external reviewer, Compose rebuild, migration, commit or push performed.
+
+Full transient logs: /tmp/remaining-attempts-unit.log, /tmp/remaining-attempts-unit-rerun.log, /tmp/remaining-attempts-package.log, /tmp/remaining-attempts-verify.log.

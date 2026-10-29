@@ -112,6 +112,68 @@ class KafkaWorkerIT {
         }
     }
 
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.EnumSource(WorkerRole.class)
+    void restartedGroupReadsMissingOffsetsWithoutReplayingCommittedRecords(WorkerRole role) throws Exception {
+        String bootstrap = KAFKA.getBootstrapServers();
+        TopicProvisioner.ensureTopics(bootstrap, 3);
+        List<JobEnvelope> jobs = new ArrayList<>();
+        for (int target = 0; target < 3; target++) {
+            JobEnvelope candidate;
+            do {
+                candidate = job(UUID.randomUUID());
+            } while (partition(JobRecordEncoder.key(candidate.jobId()), 3) != target);
+            jobs.add(candidate);
+        }
+        Vertx vertx = Vertx.vertx();
+        ConcurrentLinkedQueue<UUID> firstRuns = new ConcurrentLinkedQueue<>();
+        ConcurrentLinkedQueue<UUID> resumedRuns = new ConcurrentLinkedQueue<>();
+        KafkaWorker first = new KafkaWorker(vertx, new WorkerConfig(bootstrap, role, 2, 3), execution -> {
+            firstRuns.add(execution.job().jobId());
+            return Future.succeededFuture();
+        });
+        KafkaWorker resumed = new KafkaWorker(vertx, new WorkerConfig(bootstrap, role, 2, 3), execution -> {
+            resumedRuns.add(execution.job().jobId());
+            return Future.succeededFuture();
+        });
+        try (KafkaProducer<byte[], byte[]> producer = new KafkaProducer<>(producerProperties(bootstrap))) {
+            first.start().toCompletionStage().toCompletableFuture().get(30, TimeUnit.SECONDS);
+            sendForRole(producer, role, jobs.get(0), 0);
+            awaitCommittedAtLeast(bootstrap, role.groupId(), new TopicPartition(role.topic(), 0), 1);
+            first.close().toCompletionStage().toCompletableFuture().get(35, TimeUnit.SECONDS);
+            assertEquals(List.of(jobs.get(0).jobId()), List.copyOf(firstRuns));
+            try (AdminClient admin = AdminClient.create(Map.of("bootstrap.servers", bootstrap))) {
+                var offsets = admin.listConsumerGroupOffsets(role.groupId())
+                        .partitionsToOffsetAndMetadata().get(10, TimeUnit.SECONDS);
+                assertEquals(Set.of(new TopicPartition(role.topic(), 0)), offsets.keySet(),
+                        "the restart must have genuinely missing offsets on the other partitions");
+            }
+            // Pending work exists before restart; a latest reset would incorrectly skip it.
+            sendForRole(producer, role, jobs.get(1), 1);
+            resumed.start().toCompletionStage().toCompletableFuture().get(30, TimeUnit.SECONDS);
+            awaitCommittedAtLeast(bootstrap, role.groupId(), new TopicPartition(role.topic(), 1), 1);
+            // An initially empty partition must also remain usable after initialization.
+            sendForRole(producer, role, jobs.get(2), 2);
+            awaitCommittedAtLeast(bootstrap, role.groupId(), new TopicPartition(role.topic(), 2), 1);
+            assertEquals(Set.of(jobs.get(1).jobId(), jobs.get(2).jobId()), Set.copyOf(resumedRuns));
+            assertEquals(2, resumedRuns.size(), "committed records must not replay on restart");
+            assertEquals(1, committedOffset(bootstrap, role.groupId(), new TopicPartition(role.topic(), 0)));
+        } finally {
+            first.close().toCompletionStage().toCompletableFuture().get(35, TimeUnit.SECONDS);
+            resumed.close().toCompletionStage().toCompletableFuture().get(35, TimeUnit.SECONDS);
+            vertx.close().toCompletionStage().toCompletableFuture().get(10, TimeUnit.SECONDS);
+        }
+    }
+
+    private static void sendForRole(KafkaProducer<byte[], byte[]> producer, WorkerRole role,
+                                    JobEnvelope job, int partition) throws Exception {
+        SourceRecord original = new SourceRecord(TopicProvisioner.MAIN_TOPIC, partition, 0);
+        byte[] value = role == WorkerRole.MAIN ? JobRecordEncoder.main(job)
+                : JobRecordEncoder.retry(job.afterFailure(), 2, original, original, "HANDLER_FAILURE");
+        producer.send(new ProducerRecord<>(role.topic(), partition, JobRecordEncoder.key(job.jobId()), value))
+                .get(10, TimeUnit.SECONDS);
+    }
+
     @Test
     void establishedConsumerGroupWithOutOfRangeOffsetFailsStartupWithoutResetting() throws Exception {
         String bootstrap = KAFKA.getBootstrapServers();
@@ -220,6 +282,8 @@ class KafkaWorkerIT {
             assertEquals(1, retryRecords.size());
             JsonNode retryRecord = retryRecords.getFirst();
             assertEquals(2, retryRecord.path("attempt").asInt());
+            assertEquals(2, retryRecord.path("job").path("remainingAttempts").asInt());
+            assertFalse(retryRecord.path("job").has("maxAttempts"));
             assertEquals(validJobId.toString(), retryRecord.path("job").path("jobId").asText());
             assertGroupOffset(bootstrap, WorkerRole.RETRY.groupId(),
                     new TopicPartition(TopicProvisioner.RETRY_TOPIC,
@@ -268,7 +332,8 @@ class KafkaWorkerIT {
                     bootstrap, TopicProvisioner.RETRY_TOPIC, 2);
             assertTrue(recoveredRetries.stream().anyMatch(node ->
                     node.path("job").path("jobId").asText().equals(blockedJobId.toString())
-                            && node.path("attempt").asInt() == 2));
+                            && node.path("attempt").asInt() == 2
+                            && node.path("job").path("remainingAttempts").asInt() == 2));
             assertGroupOffset(bootstrap, WorkerRole.RETRY.groupId(),
                     new TopicPartition(TopicProvisioner.RETRY_TOPIC, blockedPartition),
                     blockedPartition == partition(validKey, 3) ? 2 : 1);
@@ -281,9 +346,9 @@ class KafkaWorkerIT {
         }
     }
 
-    /** B08: permanent and exhausted failures reach the DLQ before the source commits. */
+    /** B06/B07/B08: every failure consumes one unit; only zero reaches DLQ. */
     @Test
-    void permanentAndExhaustedFailuresReachDlqBeforeSourceCompletes() throws Exception {
+    void handlerFailuresConsumeRemainingBudgetBeforeDlq() throws Exception {
         String bootstrap = KAFKA.getBootstrapServers();
         TopicProvisioner.ensureTopics(bootstrap, 3);
         UUID permanentId = UUID.randomUUID();
@@ -317,16 +382,30 @@ class KafkaWorkerIT {
             }
 
             JsonNode permanentDlq = awaitDeadLetter(bootstrap, permanentId);
-            assertEquals("PERMANENT_HANDLER_FAILURE", permanentDlq.path("errorCode").asText());
-            assertEquals(TopicProvisioner.MAIN_TOPIC,
+            assertEquals("ATTEMPTS_EXHAUSTED", permanentDlq.path("errorCode").asText());
+            assertEquals(0, permanentDlq.path("job").path("remainingAttempts").asInt(-1));
+            assertEquals(TopicProvisioner.RETRY_TOPIC,
                     permanentDlq.path("failedSource").path("topic").asText());
-            assertEquals(1, permanentRuns.get(), "a permanent failure must not be retried");
+            assertEquals(3, permanentRuns.get(), "all failures must consume the configured budget");
+            List<JsonNode> handoffs = readJsonRecords(bootstrap, TopicProvisioner.RETRY_TOPIC, 3);
+            List<JsonNode> chain = handoffs.stream().filter(node ->
+                    node.path("job").path("jobId").asText().equals(permanentId.toString())).toList();
+            assertEquals(List.of(2, 1), chain.stream()
+                    .map(node -> node.path("job").path("remainingAttempts").asInt()).toList());
+            assertEquals(List.of(2, 3), chain.stream()
+                    .map(node -> node.path("attempt").asInt()).toList());
+            assertEquals(chain.getFirst().path("originalSource"), chain.getLast().path("originalSource"));
+            assertEquals(chain.getFirst().path("job").path("executionId"),
+                    permanentDlq.path("job").path("executionId"));
+            assertEquals(TopicProvisioner.MAIN_TOPIC, chain.getFirst().path("failedSource").path("topic").asText());
+            assertEquals(TopicProvisioner.RETRY_TOPIC, chain.getLast().path("failedSource").path("topic").asText());
             awaitCommittedAtLeast(bootstrap, WorkerRole.MAIN.groupId(),
                     new TopicPartition(TopicProvisioner.MAIN_TOPIC, partition(permanentKey, 3)),
                     permanentOffset + 1);
 
             JsonNode exhaustedDlq = awaitDeadLetter(bootstrap, exhaustedId);
             assertEquals("ATTEMPTS_EXHAUSTED", exhaustedDlq.path("errorCode").asText());
+            assertEquals(0, exhaustedDlq.path("job").path("remainingAttempts").asInt(-1));
             assertEquals(TopicProvisioner.RETRY_TOPIC,
                     exhaustedDlq.path("failedSource").path("topic").asText());
             assertEquals(List.of(1, 2), List.copyOf(exhaustedAttempts));
@@ -336,7 +415,19 @@ class KafkaWorkerIT {
             awaitCommittedAtLeast(bootstrap, WorkerRole.RETRY.groupId(),
                     new TopicPartition(TopicProvisioner.RETRY_TOPIC, partition(exhaustedKey, 3)), 1);
             Thread.sleep(1_000);
-            assertEquals(2, exhaustedAttempts.size(), "no attempt beyond maxAttempts");
+            assertEquals(2, exhaustedAttempts.size(), "no execution after budget reaches zero");
+
+            UUID singleId = UUID.randomUUID();
+            try (KafkaProducer<byte[], byte[]> producer = new KafkaProducer<>(producerProperties(bootstrap))) {
+                producer.send(new ProducerRecord<>(TopicProvisioner.MAIN_TOPIC,
+                        JobRecordEncoder.key(singleId), JobRecordEncoder.main(job(singleId, 1))))
+                        .get(10, TimeUnit.SECONDS);
+            }
+            JsonNode singleDlq = awaitDeadLetter(bootstrap, singleId);
+            assertEquals(0, singleDlq.path("job").path("remainingAttempts").asInt(-1));
+            assertEquals(1, singleDlq.path("attempt").asInt());
+            assertEquals(TopicProvisioner.MAIN_TOPIC,
+                    singleDlq.path("failedSource").path("topic").asText());
         } finally {
             retry.close().toCompletionStage().toCompletableFuture().get(35, TimeUnit.SECONDS);
             main.close().toCompletionStage().toCompletableFuture().get(35, TimeUnit.SECONDS);
@@ -398,7 +489,7 @@ class KafkaWorkerIT {
                             TopicProvisioner.MAIN_TOPIC, partition, 0);
                     JobEnvelope job = job(jobId, 3);
                     var metadata = producer.send(new ProducerRecord<>(TopicProvisioner.RETRY_TOPIC,
-                            partition, key, JobRecordEncoder.retry(job, 2, source, source,
+                            partition, key, JobRecordEncoder.retry(job.afterFailure(), 2, source, source,
                             "HANDLER_FAILURE"))).get(10, TimeUnit.SECONDS);
                     assertEquals(partition, metadata.partition());
                     inputOffsets.put(partition, metadata.offset());
@@ -517,7 +608,7 @@ class KafkaWorkerIT {
                 SourceRecord firstSource = new SourceRecord(
                         TopicProvisioner.MAIN_TOPIC, firstPartition, 0);
                 producer.send(new ProducerRecord<>(TopicProvisioner.RETRY_TOPIC,
-                        firstPartition, firstKey, JobRecordEncoder.retry(job(firstJobId, 3), 2,
+                        firstPartition, firstKey, JobRecordEncoder.retry(job(firstJobId, 3).afterFailure(), 2,
                         firstSource, firstSource, "HANDLER_FAILURE")))
                         .get(10, TimeUnit.SECONDS);
                 awaitCounter(starts, 1);
@@ -529,7 +620,7 @@ class KafkaWorkerIT {
                 SourceRecord secondSource = new SourceRecord(
                         TopicProvisioner.MAIN_TOPIC, secondPartition, 0);
                 producer.send(new ProducerRecord<>(TopicProvisioner.RETRY_TOPIC,
-                        secondPartition, secondKey, JobRecordEncoder.retry(job(secondJobId, 3), 2,
+                        secondPartition, secondKey, JobRecordEncoder.retry(job(secondJobId, 3).afterFailure(), 2,
                         secondSource, secondSource, "HANDLER_FAILURE")))
                         .get(10, TimeUnit.SECONDS);
                 awaitRetainedRecords(window, 2, 20);
@@ -1327,9 +1418,9 @@ class KafkaWorkerIT {
         return job(id, 3);
     }
 
-    private static JobEnvelope job(UUID id, int maxAttempts) {
+    private static JobEnvelope job(UUID id, int remainingAttempts) {
         return new JobEnvelope(1, id, UUID.randomUUID(), "demo.echo",
-                JsonNodeFactory.instance.objectNode().put("message", "safe demo"), maxAttempts);
+                JsonNodeFactory.instance.objectNode().put("message", "safe demo"), remainingAttempts);
     }
 
     private static int partition(byte[] key, int partitions) {

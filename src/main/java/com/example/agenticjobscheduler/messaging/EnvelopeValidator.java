@@ -26,7 +26,7 @@ public final class EnvelopeValidator {
     public static final int MAIN_MAX_BYTES = 256 * 1024;
     public static final int RETRY_MAX_BYTES = 512 * 1024;
     private static final Set<String> JOB_FIELDS = Set.of(
-            "schemaVersion", "jobId", "executionId", "jobType", "payload", "maxAttempts");
+            "schemaVersion", "jobId", "executionId", "jobType", "payload", "remainingAttempts");
     private static final Set<String> RETRY_FIELDS = Set.of(
             "schemaVersion", "job", "attempt", "handoffId", "originalSource", "failedSource", "errorCode");
     private static final Pattern UUID_TEXT = Pattern.compile(
@@ -67,7 +67,7 @@ public final class EnvelopeValidator {
         version(root);
         JobEnvelope job = job(object(root.get("job")), true);
         validateKey(key, job.jobId());
-        int attempt = integer(root, "attempt", 2, job.maxAttempts());
+        int attempt = integer(root, "attempt", 2, 101 - job.remainingAttempts());
         SourceRecord original = source(object(root.get("originalSource")));
         SourceRecord failed = source(object(root.get("failedSource")));
         // The first handoff is from the original record, not a nested retry.
@@ -110,8 +110,8 @@ public final class EnvelopeValidator {
             throw invalid(UNREGISTERED_JOB_TYPE);
         }
         ObjectNode payload = object(root.get("payload"));
-        int attempts = !normalized && !root.has("maxAttempts")
-                ? 3 : integer(root, "maxAttempts", 1, 100);
+        int attempts = !normalized && !root.has("remainingAttempts")
+                ? 3 : integer(root, "remainingAttempts", 1, 100);
         return new JobEnvelope(1, jobId, executionId, type, payload, attempts);
     }
 
