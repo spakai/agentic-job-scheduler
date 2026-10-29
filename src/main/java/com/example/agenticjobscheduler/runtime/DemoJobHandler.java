@@ -11,10 +11,16 @@ public final class DemoJobHandler implements JobHandler {
 
     @Override
     public Future<Void> execute(JobExecution execution) {
-        LOG.info(() -> "Handled jobType=" + execution.job().jobType()
+        boolean fail = execution.job().payload().path("demoFail").asBoolean(false);
+        LOG.info(() -> (fail ? "Demo failure jobType=" : "Handled jobType=") + execution.job().jobType()
                 + " jobId=" + execution.job().jobId()
                 + " executionId=" + execution.job().executionId()
-                + " attempt=" + execution.attempt());
-        return Future.succeededFuture();
+                + " attempt=" + execution.attempt()
+                + " remainingAttempts=" + execution.job().remainingAttempts()
+                + " topic=" + execution.source().topic()
+                + " partition=" + execution.source().partition()
+                + " offset=" + execution.source().offset());
+        return fail ? Future.failedFuture(new IllegalStateException("DEMO_FAILURE"))
+                : Future.succeededFuture();
     }
 }

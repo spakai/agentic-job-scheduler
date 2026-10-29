@@ -46,6 +46,18 @@ cancellation. The latest [C12 validation](docs/tasks/evidence/C12-cooperative-st
 passed 127 unit tests and 20 Kafka integration tests. Kubernetes fault testing and
 the broader campaign remain pending; see the [chaos runbook](docs/CHAOS.md).
 
+## Restart with partially committed partitions
+
+An established consumer group can have offsets on only some partitions. On
+restart, the worker preserves those committed positions and initializes only
+partitions reported by Kafka as missing an offset at their earliest retained
+record. This applies to both main and retry workers. It does not commit offsets
+until records complete normally. Out-of-range offsets still fail visibly instead
+of silently resetting. No manual consumer-group offset initialization is needed.
+
+The [R02 task](docs/tasks/R02-sparse-offset-startup.md) records the regression and
+supersedes the manual workaround used in the first failure demo.
+
 ## Partition reassignment
 
 Main and retry workers explicitly use the classic group protocol with
@@ -87,8 +99,8 @@ integration tests.
 `com.example.agenticjobscheduler.messaging.EnvelopeValidator` takes a set of
 registered job types. Call `validateMain(byte[] key, byte[] value)` or
 `validateRetry(byte[] key, byte[] value)` with raw UTF-8 bytes. The main method
-returns a normalized JobEnvelope; omitted maxAttempts becomes 3. Retry validation
-returns RetryEnvelope and requires the nested job's maxAttempts explicitly.
+returns a normalized JobEnvelope; omitted remainingAttempts becomes 3. Retry validation
+returns RetryEnvelope and requires the nested job's remainingAttempts explicitly.
 
 ```java
 var validator = new EnvelopeValidator(Set.of("demo.echo"));
@@ -237,6 +249,46 @@ use `docker compose down -v` unless deleting the demo backlog is intended. The
 single-broker Compose deployment is for learning, not a production durability
 profile.
 
+To demonstrate exhaustion with one deliberately failing sample job:
+
+```sh
+docker compose --profile tools build sample-producer
+docker compose --profile tools run --rm sample-producer --fail
+docker compose logs -f main-worker retry-worker
+```
+
+The demo-only payload flag `demoFail: true` causes each execution to fail. With
+three remaining attempts, logs show main with 3, retry with 2, retry with 1,
+and the final DLQ record contains 0. Omit `--fail` for the normal successful demo.
+Rebuild workers with `docker compose up --build --scale retry-worker=2 -d`
+when applying source changes.
+
+## Remaining attempts
+
+`remainingAttempts` includes the execution about to run. Each handler failure
+subtracts one. A positive result goes to `jobs.retry.v1` (including failures
+already on that topic); zero goes to `jobs.dlq.v1`. Success completes the source.
+
+| Execution | Incoming remainingAttempts | After failure | Destination |
+| --- | --- | --- | --- |
+| Main | 3 | 2 | Retry |
+| Retry | 2 | 1 | Same retry topic |
+| Retry | 1 | 0 | DLQ |
+
+All handler failures use this budget, including `PermanentJobFailure`. Invalid
+input/routing still goes directly to DLQ. A failed Kafka publication resends the
+same already-decremented envelope and keeps the source incomplete. Replay may
+repeat executions; this is a logical budget, not a durable deduplication limit.
+`attempt` remains diagnostic metadata in retry/DLQ records.
+
+This replaces `maxAttempts`, which is now rejected as an unknown field. The
+main default remains 3; runnable envelopes require 1–100. Retry envelopes require
+an explicit positive budget, and `attempt + remainingAttempts - 1 <= 100`.
+This is a breaking development wire change with unchanged v1 topic/schema names:
+coordinate producer/worker upgrades and drain or explicitly migrate old backlog.
+Old records replayed into the new worker go to invalid-input DLQ. Existing Kafka
+data is not automatically migrated or deleted.
+
 ## Retry wire example
 
 ```json
@@ -248,7 +300,7 @@ profile.
     "executionId": "5d0d8409-4276-4ec8-8fd0-941ed977ff00",
     "jobType": "demo.echo",
     "payload": {},
-    "maxAttempts": 3
+    "remainingAttempts": 2
   },
   "attempt": 2,
   "handoffId": "92a0e16a8b0cc0557cc22b7a6c6ae4b6687e2d12f8b65bb2bd9db2b347b1d5e3",

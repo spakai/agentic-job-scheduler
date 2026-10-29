@@ -6,19 +6,12 @@ import org.junit.jupiter.api.Test;
 
 class L04RetryAndLimiterTest {
     @Test
-    void classifiesRetryableFailuresBeforeAttemptLimit() {
-        assertEquals(FailureClassifier.FailureType.RETRYABLE,
-                FailureClassifier.classify(1, 3, new IllegalStateException("transient")));
-        assertEquals(FailureClassifier.FailureType.RETRYABLE,
-                FailureClassifier.classify(2, 3, new IllegalStateException("retry me")));
-    }
-
-    @Test
-    void classifiesExhaustedAndPermanentFailures() {
-        assertEquals(FailureClassifier.FailureType.EXHAUSTED,
-                FailureClassifier.classify(3, 3, new IllegalStateException("no more retries")));
-        assertEquals(FailureClassifier.FailureType.PERMANENT,
-                FailureClassifier.classify(3, 3, null));
+    void routesOnlyPositivePostFailureBudgetsToRetry() {
+        assertEquals(FailureClassifier.FailureType.RETRYABLE, FailureClassifier.classify(2));
+        assertEquals(FailureClassifier.FailureType.RETRYABLE, FailureClassifier.classify(1));
+        assertEquals(FailureClassifier.FailureType.EXHAUSTED, FailureClassifier.classify(0));
+        assertThrows(IllegalArgumentException.class, () -> FailureClassifier.classify(-1));
+        assertThrows(IllegalArgumentException.class, () -> FailureClassifier.classify(100));
     }
 
     @Test

@@ -12,9 +12,9 @@ is the requirements and architecture authority; this document follows the
 ### 1.1 Requirements overview
 
 Clients publish jobs to Kafka. Vert.x workers consume them as soon as records,
-worker capacity, and the adaptive limiter allow. A retryable first failure goes
-to a retry topic consumed by separate, slower retry workers. Permanent or
-exhausted failures go to a dead-letter queue (DLQ). Kafka records and consumer
+worker capacity, and the adaptive limiter allow. Each handler failure decrements
+`remainingAttempts` once. A positive budget goes to a retry topic consumed by
+separate, slower retry workers; zero goes to a dead-letter queue (DLQ). Kafka records and consumer
 offsets are the only durable backlog.
 
 There is no PostgreSQL, Flyway, REST API, delayed-job timer, scheduling state
@@ -67,7 +67,7 @@ preserve correct new-group versus invalid-offset startup semantics.
                                                             │ retryable failure
                                                             ▼
                                        jobs.retry.v1 ──> Retry workers ──> Job handler
-                                                            │ permanent / exhausted
+                                                            │ budget exhausted
                                                             ▼
                                        jobs.dlq.v1  <── (also: invalid input)  ──> Operator
 ```
@@ -106,7 +106,7 @@ Out of scope: HTTP clients, databases, external-effect fencing.
 | L01 | `EnvelopeValidator` | Validate raw main/retry envelopes and preserve invocation identity | 77 |
 | L02 | `OffsetCommitTracker` | Propose commits only for completed delivered prefixes | 17 |
 | L03 | `ImmediateJobDispatcher` | Start eligible queue heads; serialize each jobId within its topic | 14 |
-| L04 | `FailureClassifier` + `AdaptiveLimiter` | Classify retryable vs exhausted/permanent failures; main-worker backpressure policy | focused unit coverage |
+| L04 | `FailureClassifier` + `AdaptiveLimiter` | Route positive vs exhausted remaining-attempt budgets; main-worker backpressure policy | focused unit coverage |
 | L05 | `ImmediateJobDispatcher.revokeOwnership()` | Stop admission/dispatch and ignore stale local callbacks for a revoked owner | 3 |
 | H03-H04 | `KafkaWorker` capacity redistribution + runnable-head fairness | Enforce the process-wide handler cap and allocate replacement capacity only where runnable job-lane heads exist | dispatcher + runtime assertions |
 | H05-H06 | `TopicProvisioner` and `KafkaWorker` startup policy | Refuse mismatched topic counts and preserve correct offset behavior for new vs. established groups | startup safety checks |
@@ -892,7 +892,7 @@ handling or the required DLQ acknowledgment (B01/B05/B17).
 | Rebalance ownership and stale-callback behavior in the live worker | `KafkaWorkerIT` covers moved-owner replay/stale handlers; `KafkaWorkerCooperativeIT` covers retained-lane continuity for both roles. Full lifecycle gaps remain in Spec 005 C06–C11 |
 | B15: out-of-order completion across independent Kafka partitions at worker level | `mainWorkerCommitsIndependentPartitionWhileEarlierOffsetIsRunning` covers independent progress; offset gaps and prefix ordering also have tracker unit tests |
 | B07/B13: controlled runtime limiter and retry-rate behavior | Worker-level rate/concurrency and adaptive-window tests pass; retired-owner permit accounting remains C10 work |
-| B08: retry exhaustion and permanent failure through the worker to the DLQ | `permanentAndExhaustedFailuresReachDlqBeforeSourceCompletes` passes |
+| B08: all handler failures exhaust remainingAttempts before DLQ | `handlerFailuresConsumeRemainingBudgetBeforeDlq`; see [R01](docs/tasks/R01-remaining-attempts.md) for current evidence |
 | B09/B20: replay after real worker process loss | Covered by `KafkaWorkerCrashIT` (child JVM SIGKILLed mid-handler; source uncommitted; replacement replays once and commits). Compose-level kill demo not run |
 | B19: confirmed and unconfirmed handler cancellation | Worker timeout, unconfirmed cancellation, and shutdown-wait tests pass; forced Kubernetes grace remains pending |
 | Broker outage (client behavior) | Three-second broker-pause/recovery test passes; historical Compose evidence covers restart. Full outage-boundary matrix and replicated availability are unproven |
@@ -920,7 +920,7 @@ merge enforcement is a separate repository setting.
 | gate | Per-jobId lock inside a topic's dispatcher |
 | safe prefix | Contiguous run of completed delivered records eligible for offset commit |
 | processing window | Process-scoped bound on retained records/bytes |
-| DLQ | `jobs.dlq.v1`, for permanent, exhausted, or invalid input |
+| DLQ | `jobs.dlq.v1`, for exhausted handler failures or invalid input |
 
 Learning check: if A1 has stopped but its retry publication fails, can A2 start?
 **No. Handler capacity is free, but Job A's gate remains held.**

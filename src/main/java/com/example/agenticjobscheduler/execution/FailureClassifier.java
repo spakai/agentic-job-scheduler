@@ -1,30 +1,15 @@
 package com.example.agenticjobscheduler.execution;
 
-/**
- * L04 failure classification for retry/DLQ handoff decisions.
- *
- * <p>Spec 002 distinguishes retryable failures (retry topic), exhausted retries
- * (DLQ after the maximum logical attempt), and permanent failures (DLQ without retry).
- */
+/** Routing after a handler failure; the supplied budget has already been decremented. */
 public final class FailureClassifier {
-    public enum FailureType { RETRYABLE, EXHAUSTED, PERMANENT }
+    public enum FailureType { RETRYABLE, EXHAUSTED }
 
     private FailureClassifier() { }
 
-    public static FailureType classify(int attempt, int maxAttempts, Throwable failure) {
-        if (failure == null) {
-            return FailureType.PERMANENT;
+    public static FailureType classify(int remainingAttempts) {
+        if (remainingAttempts < 0 || remainingAttempts > 99) {
+            throw new IllegalArgumentException("Invalid post-failure remaining attempts");
         }
-        if (failure instanceof PermanentJobFailure) {
-            return FailureType.PERMANENT;
-        }
-        if (attempt >= maxAttempts) {
-            return FailureType.EXHAUSTED;
-        }
-        return FailureType.RETRYABLE;
-    }
-
-    public static boolean shouldRetry(int attempt, int maxAttempts, Throwable failure) {
-        return classify(attempt, maxAttempts, failure) == FailureType.RETRYABLE;
+        return remainingAttempts == 0 ? FailureType.EXHAUSTED : FailureType.RETRYABLE;
     }
 }

@@ -14,11 +14,18 @@ public final class SampleProducerMain {
     private SampleProducerMain() { }
 
     public static void main(String[] args) throws Exception {
+        if (args.length > 1 || (args.length == 1 && !args[0].equals("--fail"))) {
+            throw new IllegalArgumentException("Usage: sample-producer [--fail]");
+        }
+        boolean fail = args.length == 1;
         String bootstrap = System.getenv().getOrDefault("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092");
         int partitions = Integer.parseInt(System.getenv().getOrDefault("KAFKA_TOPIC_PARTITIONS", "12"));
         TopicProvisioner.ensureTopics(bootstrap, partitions);
 
         var payload = JsonNodeFactory.instance.objectNode().put("message", "hello from the sample producer");
+        if (fail) {
+            payload.put("demoFail", true);
+        }
         var job = new JobEnvelope(1, UUID.randomUUID(), UUID.randomUUID(),
                 "demo.echo", payload, 3);
         Properties properties = new Properties();

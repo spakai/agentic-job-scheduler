@@ -521,7 +521,7 @@ class ImmediateJobDispatcherTest {
         });
         var valid = job(MAIN, 0, 0, A, 101);
         assertThrows(IllegalArgumentException.class, () -> new JobExecution(valid.source(), valid.job(), 0));
-        assertThrows(IllegalArgumentException.class, () -> new JobExecution(valid.source(), valid.job(), 4));
+        assertThrows(IllegalArgumentException.class, () -> new JobExecution(valid.source(), valid.job(), 99));
     }
 
     private ImmediateJobDispatcher create(String topic, int capacity, int bound, JobHandler handler)

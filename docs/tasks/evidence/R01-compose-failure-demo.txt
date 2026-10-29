@@ -1,0 +1,52 @@
+R01 Compose failure demo — 2026-10-29, Asia/Kuala_Lumpur
+Base: a6781ab4480aa6a6fb986d82edba63287c94f159 plus working diff on feat/remaining-attempts-envelope.
+
+Changes: sample-producer --fail sets an explicit demo-only failure flag; DemoJobHandler
+returns a failed future for that flag and logs identity, budget, and source coordinates.
+Normal sample remains successful. No payload contents retained in this evidence.
+
+Commands and outcomes:
+mvn -B -ntp test: PASS, 132 tests, zero failures/errors/skips.
+mvn -B -ntp package: PASS, 132 unit tests and JAR built.
+docker compose --profile tools build main-worker retry-worker sample-producer: PASS.
+docker compose up --scale retry-worker=2 -d: PASS (worker initialization problem below).
+docker compose --profile tools run --rm sample-producer --fail: PASS.
+Accepted jobId=799d3f97-e87b-4772-a911-34065c73a966 topic=jobs.main.v1 partition=0 offset=0
+
+Startup issue and recovery:
+The established main group had committed partition 1 at offset 1; the other 11
+partitions had no committed offsets. On worker restart, auto.offset.reset=none
+caused NoOffsetForPartitionException on those never-committed partitions.
+No sample handler ran until recovery. This is an existing runtime startup-policy
+limitation, not a remainingAttempts routing failure. No code fix claimed.
+Stopped main-worker, dry-ran then executed earliest-position initialization only
+for partitions 0,2,3,4,5,6,7,8,9,10,11 (all earliest positions were 0):
+  docker compose stop main-worker
+  docker compose exec -T kafka /opt/kafka/bin/kafka-consumer-groups.sh --bootstrap-server kafka:9092 --group job-main-v1 --topic jobs.main.v1:0,2,3,4,5,6,7,8,9,10,11 --reset-offsets --to-earliest --dry-run
+  docker compose exec -T kafka /opt/kafka/bin/kafka-consumer-groups.sh --bootstrap-server kafka:9092 --group job-main-v1 --topic jobs.main.v1:0,2,3,4,5,6,7,8,9,10,11 --reset-offsets --to-earliest --execute
+  docker compose start main-worker
+Partition 1 remained at offset 1. No records skipped/deleted, volume preserved.
+This is a recovery specific to the inspected group state, not a general reset procedure.
+
+Observed logs (UTC, same jobId above and executionId=e1977862-cb85-496c-9aeb-0b98609b3a40):
+2026-10-29T01:57:38.273291026Z main-worker-1  Demo failure attempt=1 remainingAttempts=3 topic=jobs.main.v1 partition=0 offset=0
+2026-10-29T01:57:38.349758128Z retry-worker-2 Demo failure attempt=2 remainingAttempts=2 topic=jobs.retry.v1 partition=0 offset=0
+2026-10-29T01:57:39.346109893Z retry-worker-2 Demo failure attempt=3 remainingAttempts=1 topic=jobs.retry.v1 partition=0 offset=1
+
+Kafka console-consumer readback (from beginning, bounded to two retry records / one DLQ record):
+jobs.retry.v1: attempt=2 remainingAttempts=2 errorCode=HANDLER_FAILURE failedSource=jobs.main.v1/0/0
+jobs.retry.v1: attempt=3 remainingAttempts=1 errorCode=HANDLER_FAILURE failedSource=jobs.retry.v1/0/0
+jobs.dlq.v1:   attempt=3 remainingAttempts=0 errorCode=ATTEMPTS_EXHAUSTED failedSource=jobs.retry.v1/0/1
+All three records retain the same jobId, executionId, and originalSource=jobs.main.v1/0/0.
+
+Final consumer-group describe:
+job-main-v1 jobs.main.v1 partition=0 current-offset=1 log-end-offset=1 lag=0
+job-main-v1 jobs.main.v1 partition=1 current-offset=1 log-end-offset=1 lag=0 (preserved)
+job-retry-v1 jobs.retry.v1 partition=0 current-offset=2 log-end-offset=2 lag=0
+Other retry partitions remain empty/uncommitted; restarting retry workers can expose
+the same sparse-offset initialization limitation. Runtime fix remains follow-up work.
+
+Final docker compose ps: Kafka healthy, main-worker-1 and retry-worker-1/-2 running.
+No commit/push, Kafka-data deletion, or full integration rerun in this follow-up.
+Unit/package and actual Compose run validate the demo-only additions; earlier R01
+integration results remain separately recorded, including the initial timeout.

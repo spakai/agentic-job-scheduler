@@ -11,8 +11,8 @@ and the earlier delayed-scheduling design of Spec 002.
 
 Clients publish jobs to Kafka. Vert.x consumes them as soon as records, worker
 capacity, and the adaptive limiter allow. A failed first attempt goes to a retry
-topic; separate retry pods consume at a lower rate and concurrency. Permanent or
-exhausted failures go to a dead-letter queue (DLQ).
+topic while budget remains; separate retry pods consume at a lower rate and
+concurrency. Exhausted failures go to a dead-letter queue (DLQ).
 
 There are no scheduled times, delayed jobs, timer indexes, jobs.state topic,
 RocksDB store, or state restoration service. Kafka topic records and consumer
@@ -35,17 +35,17 @@ production business handler, or Kubernetes deployment is required.
 ```text
 Client -> jobs.main.v1 -> main Vert.x workers + adaptive limiter
                                | success: complete record
-                               | retryable failure
+                               | failure, remainingAttempts decremented > 0
                                v
                          jobs.retry.v1 -> separate slower retry workers
                                ^                 | success: complete record
-                               |_________________| retryable, attempts remain
+                               |_________________| failure, remainingAttempts decremented > 0
                                                  |
-                               permanent/exhausted failure -> jobs.dlq.v1
+                               remainingAttempts decremented to 0 -> jobs.dlq.v1
 ```
 
-Permanent failure on the main topic also goes directly to DLQ. Retry workers
-execute jobs directly; they do not send them back to the main topic.
+A main failure with remainingAttempts reduced to zero goes directly to DLQ.
+Retry workers execute jobs directly; they do not send them back to the main topic.
 
 Use consumer group `job-main-v1` for main workers and `job-retry-v1` for retry
 workers. A consumer belongs to one verticle and may own multiple partitions.
@@ -72,7 +72,11 @@ Use idempotent producers with `acks=all` and finite delivery timeouts. Local
 Compose uses one KRaft broker, replication factor 1, min ISR 1, and a persistent
 Kafka volume. Document a deployment baseline of three brokers, replication factor
 3, min ISR 2. Use `enable.auto.commit=false` and `auto.offset.reset=earliest` for
-new groups. Fail visibly on an established group's out-of-range offsets instead
+new groups. For established groups, retain `auto.offset.reset=none`; if Kafka
+reports missing offsets on individual partitions, explicitly seek only those
+currently owned partitions to their earliest retained records. Do not alter
+committed positions on other partitions or commit synthetic completion offsets.
+Fail visibly on an established group's out-of-range offsets instead
 of silently skipping lost work. Consumers may use `read_committed` to support
 transactional clients, but this increment does not require Kafka transactions.
 
@@ -91,12 +95,25 @@ Clients write UTF-8 JSON to jobs.main.v1, keyed by jobId:
   "executionId": "5d0d8409-4276-4ec8-8fd0-941ed977ff00",
   "jobType": "demo.echo",
   "payload": { "message": "hello" },
-  "maxAttempts": 3
+  "remainingAttempts": 3
 }
 ```
 
 Require UUID identifiers, version 1, a registered jobType of 1–128 characters,
-and an object payload. maxAttempts is optional, defaults to 3, and accepts 1–100.
+and an object payload. remainingAttempts is optional on main, defaults to 3, and
+accepts 1–100. It includes the execution about to run. After any handler failure,
+decrement once: publish to retry if positive, or DLQ if zero. For example, 3 on
+main becomes 2 on retry, then 1 on retry, then 0 on DLQ if all executions fail.
+Success completes the record without a handoff or further decrement.
+
+This development wire change replaces maxAttempts (2026-10-29). The old field is
+rejected as unknown, even if remainingAttempts is also present; no implicit
+migration is performed. Schema version/topic names remain v1 for this development
+project. Coordinate producer and worker upgrades and drain or explicitly migrate
+old backlog first. Replaying old-format records into new workers routes them to
+invalid-input DLQ. Historical evidence using maxAttempts is not evidence for this
+new contract.
+
 Reject unknown fields, including scheduledAt, notBefore, and client-supplied
 attempt values. Limit client records to 256 KiB. Read raw bytes before decoding
 so malformed JSON can be routed to DLQ rather than trapping deserialization.
@@ -108,17 +125,20 @@ the stable handler idempotency key, across attempts and deliveries. It does not
 store a durable deduplication table or detect conflicting payloads across restarts.
 The client is responsible for not reusing identities with changed content.
 
-Internal retry records wrap the original normalized job with `attempt` (the next
-attempt to execute), a stable handoffId derived from source topic/partition/offset
-and next attempt, original source identity, and a bounded error code. Validate
-retry attempt in 2..maxAttempts. Preserve the original job and execution IDs.
+Internal retry records wrap the normalized job with its decremented
+remainingAttempts and `attempt` (the next attempt number, diagnostic metadata),
+a stable handoffId derived from source topic/partition/offset and next attempt,
+original source identity, and a bounded error code. Validate
+retry attempt >= 2 and attempt + remainingAttempts - 1 <= 100, with positive
+remainingAttempts required. Only remainingAttempts controls retry eligibility.
+Preserve the original job and execution IDs and payload.
 Do not recursively nest retry envelopes. Reserve at least 512 KiB for internal
 records and align producer/broker/consumer limits accordingly.
 
 L01 makes the retry wire fields concrete: top-level `schemaVersion`, `job`,
 `attempt`, `handoffId`, `originalSource`, `failedSource`, and `errorCode` are
 required, with no unknown fields. `job` is the normalized main envelope, including
-explicit maxAttempts. Each source has `topic` (Kafka topic name), `partition`
+explicit remainingAttempts. Each source has `topic` (Kafka topic name), `partition`
 (nonnegative 32-bit integer), and `offset` (nonnegative 64-bit integer).
 originalSource stays unchanged; failedSource identifies the record that just
 failed. They must match for attempt 2. handoffId is lowercase SHA-256 hex over
@@ -144,9 +164,9 @@ retry does not keep the main-topic gate locked. A1 may therefore retry while A2
 runs on the main topic. Retry records follow retry-topic append order; repeated
 handoffs do not promise original main-topic order across attempts.
 
-On success mark the source record complete in memory. On retryable failure,
-publish its retry envelope and mark complete only after broker acknowledgment.
-On permanent/exhausted failure, do the same with DLQ. If the handoff publication
+On success mark the source record complete in memory. On failure, decrement
+remainingAttempts once. Publish a retry envelope when positive, or a DLQ envelope
+when zero, and mark complete only after broker acknowledgment. If publication
 fails, keep the source incomplete and retry the send with the same envelope;
 do not rerun the handler simply because its handoff failed.
 
@@ -207,16 +227,21 @@ and producer buffers as well as application queues.
 
 ## 8. Slower retries and DLQ
 
-The main worker makes attempt 1 only. A retryable failure with maxAttempts > 1
-publishes attempt 2 to jobs.retry.v1. Retry workers consume immediately when their
+The main worker makes attempt 1 only. A handler failure decrements
+remainingAttempts; if positive, publish attempt 2 with that reduced budget to
+jobs.retry.v1. If zero, publish to DLQ. Retry workers consume immediately when their
 own capacity and rate budget allow. They default to concurrency 2 and a token
 bucket of 1 handler start per second per pod, burst 1. Both limits are configurable;
 there is no per-record delay, exponential backoff, or notBefore timestamp.
 
-A retry failure with remaining attempts publishes attempt N+1 to the same retry
-topic, then completes its source record after acknowledgment. A retry success
-completes the source. A permanent failure or failure at maxAttempts goes to DLQ.
-Only handler failures advance the attempt number; Kafka send failures do not.
+A retry failure decrements remainingAttempts once, then publishes attempt N+1
+with the reduced budget to the same retry topic if positive, or DLQ if zero.
+It completes its source record only after acknowledgment. A retry success completes
+the source without a handoff. All handler failures follow this rule, including
+PermanentJobFailure and confirmed timeouts; there is no permanent-failure bypass.
+Invalid envelopes/routing still go directly to DLQ without handler execution.
+Only handler failures decrement the budget. Kafka send failures retry the same
+encoded record without another decrement or handler invocation.
 
 The attempt limit bounds a logical retry chain, not physical invocations under
 crash/replay: the same numbered attempt may execute more than once. Duplicate
@@ -227,8 +252,9 @@ allows backlog to accumulate, subject to topic retention.
 
 DLQ records include a stable handoffId, identity where valid, logical attempt,
 sanitized reason, timestamp, original source and failing source coordinates,
-and the original valid job. Invalid records use a bounded byte sample and hash
-instead of copying arbitrary input. Never log payloads or credentials. Automated
+and the valid job with zero remainingAttempts for exhausted handler failures.
+Invalid routing retains the input budget because no handler ran. Invalid records
+use a bounded byte sample and hash instead of copying arbitrary input. Never log payloads or credentials. Automated
 DLQ redrive is deferred; any manual redrive needs an explicit identity decision.
 
 ## 9. Rebalance, shutdown, and handler contract
@@ -300,9 +326,9 @@ integration tests require Docker and must fail clearly if unavailable.
 | B03 | Same jobId is sequential within each topic under stable ownership |
 | B04 | Different job IDs run concurrently, including within one partition |
 | B05 | Offset commit never passes an incomplete delivered record |
-| B06 | First retryable failure hands attempt 2 to retry before source completion |
-| B07 | Retry pods obey concurrency/rate limits and increment logical attempt on failure |
-| B08 | Permanent/exhausted failures reach DLQ before source completion |
+| B06 | First failure decrements remainingAttempts and hands positive budget to retry before source completion |
+| B07 | Retry pods obey concurrency/rate limits and decrement remainingAttempts once per failure, reusing the retry topic |
+| B08 | Handler failures reach DLQ at remainingAttempts zero, before source completion |
 | B09 | Crash after handler success or handoff acknowledgment demonstrates permitted replay |
 | B10 | Repeated delivery preserves handler identity; no service deduplication claim is made |
 | B11 | Revocation stops new dispatch and ignores stale callbacks/commits |

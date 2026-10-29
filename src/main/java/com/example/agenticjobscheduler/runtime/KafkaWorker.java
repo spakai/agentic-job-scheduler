@@ -45,6 +45,8 @@ import java.util.logging.Logger;
 import org.apache.kafka.clients.admin.AdminClient;
 import org.apache.kafka.clients.admin.OffsetSpec;
 import org.apache.kafka.common.utils.Utils;
+import org.apache.kafka.clients.consumer.NoOffsetForPartitionException;
+import org.apache.kafka.clients.consumer.OffsetOutOfRangeException;
 
 /**
  * One Kafka consumer group member. All delivery, dispatch, and commit state is
@@ -280,6 +282,14 @@ public final class KafkaWorker {
                 return;
             }
             if (result.failed()) {
+                if (result.cause() instanceof NoOffsetForPartitionException missing) {
+                    initializeMissingOffsets(missing);
+                    return;
+                }
+                if (result.cause() instanceof OffsetOutOfRangeException) {
+                    failWorker("Kafka offset is outside the retained range; refusing to reset", result.cause());
+                    return;
+                }
                 LOG.log(Level.WARNING, "Kafka poll failed; retaining uncommitted work", result.cause());
                 vertx.setTimer(HANDOFF_RETRY_MILLIS, ignored -> pollNext());
                 return;
@@ -316,6 +326,33 @@ public final class KafkaWorker {
             }
             admitPendingBatch();
             pollNext();
+        });
+    }
+
+    private void initializeMissingOffsets(NoOffsetForPartitionException missing) {
+        // Kafka distinguishes absent positions from out-of-range committed positions.
+        // Do not reset an entire assignment: other partitions can have valid progress.
+        Set<TopicPartition> partitions = missing.partitions().stream()
+                .map(partition -> new TopicPartition(partition.topic(), partition.partition()))
+                .filter(owners::containsKey)
+                .collect(java.util.stream.Collectors.toSet());
+        if (partitions.isEmpty()) {
+            // Empty seekToBeginning means ALL assigned partitions in Kafka.
+            pollNext();
+            return;
+        }
+        LOG.info(() -> "Initializing partitions without committed offsets at earliest: " + partitions);
+        consumer.seekToBeginning(partitions).onComplete(result -> {
+            if (stopping) {
+                return;
+            }
+            if (result.failed()) {
+                failWorker("Could not initialize missing Kafka offsets", result.cause());
+            } else {
+                // No other poll is issued while this seek is pending. This seeks locally;
+                // offsets are committed only after normal execution/handoff completion.
+                pollNext();
+            }
         });
     }
 
@@ -422,20 +459,20 @@ public final class KafkaWorker {
                                        ImmediateJobDispatcher.Submission submission,
                                        JobExecution execution, SourceRecord originalSource) {
         Throwable failure = submission.handlerFailure();
-        FailureClassifier.FailureType failureType = FailureClassifier.classify(execution.attempt(),
-                execution.job().maxAttempts(), failure);
+        JobEnvelope failedJob = execution.job().afterFailure();
+        FailureClassifier.FailureType failureType =
+                FailureClassifier.classify(failedJob.remainingAttempts());
         boolean retryable = failureType == FailureClassifier.FailureType.RETRYABLE;
         String errorCode = failure instanceof HandlerTimeoutException ? "HANDLER_TIMEOUT"
-            : failureType == FailureClassifier.FailureType.PERMANENT
-                ? "PERMANENT_HANDLER_FAILURE" : "HANDLER_FAILURE";
+                : "HANDLER_FAILURE";
         if (failureType == FailureClassifier.FailureType.EXHAUSTED) {
             errorCode = "ATTEMPTS_EXHAUSTED";
         }
         String topic = retryable ? TopicProvisioner.RETRY_TOPIC : TopicProvisioner.DLQ_TOPIC;
         byte[] value = retryable
-                ? JobRecordEncoder.retry(execution.job(), execution.attempt() + 1,
+                ? JobRecordEncoder.retry(failedJob, execution.attempt() + 1,
                         execution.source(), originalSource, errorCode)
-                : JobRecordEncoder.deadLetter(execution.job(), execution.attempt(),
+                : JobRecordEncoder.deadLetter(failedJob, execution.attempt(),
                         execution.source(), originalSource, errorCode);
         sendUntilAcknowledged(KafkaProducerRecord.create(topic,
                 JobRecordEncoder.key(execution.job().jobId()), value))

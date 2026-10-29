@@ -27,6 +27,7 @@ public final class JobRecordEncoder {
         return jobId.toString().getBytes(StandardCharsets.UTF_8);
     }
 
+    /** Serializes the post-failure job; the caller has already decremented remainingAttempts. */
     public static byte[] retry(JobEnvelope job, int nextAttempt, SourceRecord source,
                                SourceRecord originalSource, String errorCode) {
         ObjectNode root = JSON.createObjectNode();
@@ -79,7 +80,7 @@ public final class JobRecordEncoder {
         node.put("executionId", job.executionId().toString());
         node.put("jobType", job.jobType());
         node.set("payload", job.payload());
-        node.put("maxAttempts", job.maxAttempts());
+        node.put("remainingAttempts", job.remainingAttempts());
         return node;
     }
 

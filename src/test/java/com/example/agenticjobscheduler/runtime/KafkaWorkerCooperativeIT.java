@@ -186,7 +186,7 @@ class KafkaWorkerCooperativeIT {
                 JsonNodeFactory.instance.objectNode(), 3);
         SourceRecord original = new SourceRecord(TopicProvisioner.MAIN_TOPIC, partition, expectedOffset);
         byte[] value = role == WorkerRole.MAIN ? JobRecordEncoder.main(job)
-                : JobRecordEncoder.retry(job, 2, original, original, "HANDLER_FAILURE");
+                : JobRecordEncoder.retry(job.afterFailure(), 2, original, original, "HANDLER_FAILURE");
         var metadata = producer.send(new ProducerRecord<>(role.topic(), partition,
                 JobRecordEncoder.key(jobId), value)).get(10, TimeUnit.SECONDS);
         assertEquals(expectedOffset, metadata.offset());
