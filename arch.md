@@ -263,7 +263,9 @@ KafkaWorker startup and resize policy
    ├─ active handler limit checked for every real start
    ├─ queue head fairness uses runnable heads, not queued-record count
    ├─ topic count mismatch => fail fast, do not resize
-   └─ new group => earliest; established invalid offset => none + visible failure
+   ├─ new group => earliest
+   ├─ established group, partition with no offset => seek only that partition to earliest
+   └─ established out-of-range offset => none + visible failure
 ```
 
 H05 enforces fixed topic partition counts by failing startup when an existing
@@ -272,10 +274,13 @@ it. This protects the assignment contract in Spec 002 and keeps partition keys
 stable across service restarts.
 
 H06 preserves the Kafka offset contract for group initialization. A brand-new
-consumer group starts at `earliest`; an existing group with no valid committed
-offset or an out-of-range offset is not silently reset to an arbitrary point. It
-fails visibly, which makes the operational mismatch obvious and prevents a
-misconfigured worker from starting with a hidden offset jump.
+consumer group starts at `earliest`. An established group keeps
+`auto.offset.reset=none`: when Kafka reports individual owned partitions with no
+committed offset (R02), only those partitions are seeked to their earliest
+retained record, then polling resumes. Committed positions on other partitions
+are never altered and no synthetic completion offset is committed. An
+out-of-range committed offset is not silently reset; it fails visibly, which
+prevents a hidden offset jump that would skip lost work.
 
 ### 6.4 Completion and safe-prefix commits (L02)
 
