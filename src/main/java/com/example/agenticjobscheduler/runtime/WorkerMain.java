@@ -16,7 +16,18 @@ public final class WorkerMain {
         WorkerConfig config = WorkerConfig.fromEnvironment(System.getenv());
         TopicProvisioner.ensureTopics(config.bootstrapServers(), config.topicPartitions());
         Vertx vertx = Vertx.vertx();
-        KafkaWorker worker = new KafkaWorker(vertx, config, new DemoJobHandler());
+        WorkerRuntime worker;
+        try {
+            worker = WorkerRuntime.deploy(vertx, config, new DemoJobHandler())
+                    .toCompletionStage().toCompletableFuture().get(30, TimeUnit.SECONDS);
+        } catch (Exception failure) {
+            try {
+                vertx.close().toCompletionStage().toCompletableFuture().get(10, TimeUnit.SECONDS);
+            } catch (Exception closeFailure) {
+                failure.addSuppressed(closeFailure);
+            }
+            throw failure;
+        }
         CountDownLatch stopped = new CountDownLatch(1);
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
             try {
@@ -33,8 +44,6 @@ public final class WorkerMain {
                 stopped.countDown();
             }
         }, "worker-shutdown"));
-        worker.start().toCompletionStage().toCompletableFuture()
-                .get(30, TimeUnit.SECONDS);
         LOG.info(() -> "Started " + config.role() + " worker, group="
                 + config.role().groupId() + ", concurrency=" + config.concurrency());
         stopped.await();

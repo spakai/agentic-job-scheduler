@@ -28,10 +28,12 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import org.apache.kafka.clients.admin.AdminClient;
 import org.apache.kafka.clients.admin.AlterConfigOp;
 import org.apache.kafka.clients.admin.ConfigEntry;
@@ -60,6 +62,77 @@ class KafkaWorkerIT {
     @Container
     private final KafkaContainer KAFKA =
             new KafkaContainer(DockerImageName.parse("apache/kafka-native:3.8.0"));
+
+    @Test
+    void consumerVerticleOwnsMultiplePartitionsAndDispatchesSafely() throws Exception {
+        String bootstrap = KAFKA.getBootstrapServers();
+        TopicProvisioner.ensureTopics(bootstrap, 3);
+        JobEnvelope slow = job(UUID.randomUUID());
+        int slowPartition = partition(JobRecordEncoder.key(slow.jobId()), 3);
+        JobEnvelope samePartition;
+        do {
+            samePartition = job(UUID.randomUUID());
+        } while (partition(JobRecordEncoder.key(samePartition.jobId()), 3) != slowPartition);
+        JobEnvelope otherPartition;
+        do {
+            otherPartition = job(UUID.randomUUID());
+        } while (partition(JobRecordEncoder.key(otherPartition.jobId()), 3) == slowPartition);
+        int otherPartitionId = partition(JobRecordEncoder.key(otherPartition.jobId()), 3);
+
+        Promise<Void> first = Promise.promise();
+        AtomicInteger slowStarts = new AtomicInteger();
+        Set<UUID> otherStarts = ConcurrentHashMap.newKeySet();
+        Vertx vertx = Vertx.vertx();
+        WorkerRuntime runtime = WorkerRuntime.deploy(vertx,
+                new WorkerConfig(bootstrap, WorkerRole.MAIN, 4, 3), execution -> {
+                    if (execution.job().jobId().equals(slow.jobId())) {
+                        return slowStarts.incrementAndGet() == 1
+                                ? first.future() : Future.succeededFuture();
+                    }
+                    otherStarts.add(execution.job().jobId());
+                    return Future.succeededFuture();
+                }).toCompletionStage().toCompletableFuture().get(30, TimeUnit.SECONDS);
+        try (KafkaProducer<byte[], byte[]> producer = new KafkaProducer<>(producerProperties(bootstrap));
+             AdminClient admin = AdminClient.create(Map.of("bootstrap.servers", bootstrap))) {
+            byte[] slowKey = JobRecordEncoder.key(slow.jobId());
+            producer.send(new ProducerRecord<>(TopicProvisioner.MAIN_TOPIC, slowPartition,
+                    slowKey, JobRecordEncoder.main(slow))).get(10, TimeUnit.SECONDS);
+            producer.send(new ProducerRecord<>(TopicProvisioner.MAIN_TOPIC, slowPartition,
+                    slowKey, JobRecordEncoder.main(slow))).get(10, TimeUnit.SECONDS);
+            producer.send(new ProducerRecord<>(TopicProvisioner.MAIN_TOPIC, slowPartition,
+                    JobRecordEncoder.key(samePartition.jobId()), JobRecordEncoder.main(samePartition)))
+                    .get(10, TimeUnit.SECONDS);
+            producer.send(new ProducerRecord<>(TopicProvisioner.MAIN_TOPIC, otherPartitionId,
+                    JobRecordEncoder.key(otherPartition.jobId()), JobRecordEncoder.main(otherPartition)))
+                    .get(10, TimeUnit.SECONDS);
+
+            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(30);
+            while ((slowStarts.get() < 1 || otherStarts.size() < 2) && System.nanoTime() < deadline) {
+                Thread.sleep(25);
+            }
+            assertEquals(1, slowStarts.get(), "the second same-job execution must stay gated");
+            assertEquals(2, otherStarts.size(), "different IDs must execute concurrently");
+            var group = admin.describeConsumerGroups(List.of(WorkerRole.MAIN.groupId()))
+                    .describedGroups().get(WorkerRole.MAIN.groupId()).get(10, TimeUnit.SECONDS);
+            assertEquals(1, group.members().size(), "worker verticles must not create consumers");
+            assertEquals(3, group.members().iterator().next().assignment().topicPartitions().size());
+            awaitCommittedAtLeast(bootstrap, WorkerRole.MAIN.groupId(),
+                    new TopicPartition(TopicProvisioner.MAIN_TOPIC, otherPartitionId), 1);
+            assertEquals(-1, committedOffset(bootstrap, WorkerRole.MAIN.groupId(),
+                    new TopicPartition(TopicProvisioner.MAIN_TOPIC, slowPartition)));
+            Future<Void> closing = runtime.close();
+            assertFalse(closing.isComplete(), "shutdown must wait for the in-flight handler");
+            first.complete();
+            closing.toCompletionStage().toCompletableFuture().get(35, TimeUnit.SECONDS);
+            awaitCommittedAtLeast(bootstrap, WorkerRole.MAIN.groupId(),
+                    new TopicPartition(TopicProvisioner.MAIN_TOPIC, slowPartition), 3);
+            assertEquals(2, slowStarts.get());
+        } finally {
+            first.tryComplete();
+            runtime.close().toCompletionStage().toCompletableFuture().get(35, TimeUnit.SECONDS);
+            vertx.close().toCompletionStage().toCompletableFuture().get(10, TimeUnit.SECONDS);
+        }
+    }
 
     @Test
     void topicProvisionerFailsWithoutResizingAnExistingTopic() throws Exception {
@@ -1016,18 +1089,19 @@ class KafkaWorkerIT {
         Promise<Void> cancellationRequested = Promise.promise();
         Promise<Void> firstHandler = Promise.promise();
         Vertx vertx = Vertx.vertx();
+        ExecutionVerticlePool workers = ExecutionVerticlePool.deploy(vertx, execution -> {
+            if (execution.source().offset() == 0) {
+                handlerStarts.incrementAndGet();
+                execution.cancellation().cancellationRequested()
+                        .onSuccess(ignored -> cancellationRequested.tryComplete());
+                return firstHandler.future();
+            }
+            handlerStarts.incrementAndGet();
+            return Future.succeededFuture();
+        }, 2).toCompletionStage().toCompletableFuture().get(10, TimeUnit.SECONDS);
         KafkaWorker main = new KafkaWorker(vertx,
                 new WorkerConfig(bootstrap, WorkerRole.MAIN, 2, 3),
-                execution -> {
-                    if (execution.source().offset() == 0) {
-                        handlerStarts.incrementAndGet();
-                        execution.cancellation().cancellationRequested()
-                                .onSuccess(ignored -> cancellationRequested.tryComplete());
-                        return firstHandler.future();
-                    }
-                    handlerStarts.incrementAndGet();
-                    return Future.succeededFuture();
-                }, new ProcessingWindow(), 2_000, 100, 250);
+                workers, new ProcessingWindow(), 2_000, 100, 250);
         try {
             main.start().toCompletionStage().toCompletableFuture().get(30, TimeUnit.SECONDS);
             try (KafkaProducer<byte[], byte[]> producer =
@@ -1056,6 +1130,72 @@ class KafkaWorkerIT {
             assertEquals(2, handlerStarts.get());
         } finally {
             firstHandler.tryComplete();
+            main.close().toCompletionStage().toCompletableFuture().get(10, TimeUnit.SECONDS);
+            vertx.close().toCompletionStage().toCompletableFuture().get(10, TimeUnit.SECONDS);
+        }
+    }
+
+    @Test
+    void handlerTimeoutDoesNotRunWhileInvocationWaitsForWorkerContext() throws Exception {
+        String bootstrap = KAFKA.getBootstrapServers();
+        TopicProvisioner.ensureTopics(bootstrap, 3);
+        JobEnvelope firstJob = job(UUID.randomUUID());
+        int targetPartition = partition(JobRecordEncoder.key(firstJob.jobId()), 3);
+        JobEnvelope secondJob;
+        do {
+            secondJob = job(UUID.randomUUID());
+        } while (partition(JobRecordEncoder.key(secondJob.jobId()), 3) != targetPartition);
+        CountDownLatch release = new CountDownLatch(1);
+        AtomicReference<JobExecution> firstStarted = new AtomicReference<>();
+        Promise<Boolean> secondStartedCancelled = Promise.promise();
+        Vertx vertx = Vertx.vertx();
+        ExecutionVerticlePool workers = ExecutionVerticlePool.deploy(vertx, execution -> {
+            if (execution.job().jobId().equals(firstJob.jobId())) {
+                firstStarted.set(execution);
+                try {
+                    if (!release.await(10, TimeUnit.SECONDS)) {
+                        return Future.failedFuture("Test barrier timed out");
+                    }
+                } catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt();
+                    return Future.failedFuture(interrupted);
+                }
+            } else {
+                secondStartedCancelled.tryComplete(execution.cancellation().isCancellationRequested());
+            }
+            return Future.succeededFuture();
+        }, 1).toCompletionStage().toCompletableFuture().get(10, TimeUnit.SECONDS);
+        ProcessingWindow window = new ProcessingWindow();
+        KafkaWorker main = new KafkaWorker(vertx,
+                new WorkerConfig(bootstrap, WorkerRole.MAIN, 2, 3),
+                workers, window, 2_000, 250, 1_000);
+        try (KafkaProducer<byte[], byte[]> producer = new KafkaProducer<>(producerProperties(bootstrap))) {
+            main.start().toCompletionStage().toCompletableFuture().get(30, TimeUnit.SECONDS);
+            producer.send(new ProducerRecord<>(TopicProvisioner.MAIN_TOPIC, targetPartition,
+                    JobRecordEncoder.key(firstJob.jobId()), JobRecordEncoder.main(firstJob)))
+                    .get(10, TimeUnit.SECONDS);
+            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+            while (firstStarted.get() == null && System.nanoTime() < deadline) {
+                Thread.sleep(10);
+            }
+            assertNotNull(firstStarted.get());
+            producer.send(new ProducerRecord<>(TopicProvisioner.MAIN_TOPIC, targetPartition,
+                    JobRecordEncoder.key(secondJob.jobId()), JobRecordEncoder.main(secondJob)))
+                    .get(10, TimeUnit.SECONDS);
+            deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+            while (window.retainedRecords() < 2 && System.nanoTime() < deadline) {
+                Thread.sleep(10);
+            }
+            assertEquals(2, window.retainedRecords(), "both deliveries must be admitted");
+            Thread.sleep(750); // Longer than the timeout while the worker context is held.
+            assertTrue(firstStarted.get().cancellation().isCancellationRequested());
+            release.countDown();
+            assertFalse(secondStartedCancelled.future().toCompletionStage().toCompletableFuture()
+                    .get(10, TimeUnit.SECONDS), "queued work must not time out before handler start");
+            awaitCommittedAtLeast(bootstrap, WorkerRole.MAIN.groupId(),
+                    new TopicPartition(TopicProvisioner.MAIN_TOPIC, targetPartition), 2);
+        } finally {
+            release.countDown();
             main.close().toCompletionStage().toCompletableFuture().get(10, TimeUnit.SECONDS);
             vertx.close().toCompletionStage().toCompletableFuture().get(10, TimeUnit.SECONDS);
         }

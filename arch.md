@@ -123,11 +123,13 @@ and do not constitute the full B14–B20 suite. Evidence:
 [L05](docs/tasks/L05-replay-rebalances.md), and
 [L06](docs/tasks/L06-backpressure-recovery.md).
 
-Runtime classes (`runtime/`): `WorkerMain` (one role per process), `KafkaWorker`
-(consumer group member), `WorkerConfig`/`WorkerRole`, `TopicProvisioner`,
+Runtime classes (`runtime/`): `WorkerMain` (one role per process), `WorkerRuntime`
+(deployment and drain lifecycle), `ConsumerVerticle` (one Kafka owner per process),
+`ExecutionVerticlePool` (nonblocking handler contexts), `KafkaWorker`
+(consumer group member and partition state), `WorkerConfig`/`WorkerRole`, `TopicProvisioner`,
 `JobRecordEncoder`, `DemoJobHandler`, `SampleProducerMain`.
 
-### 5.2 Level 2: worker verticle and partition ownership
+### 5.2 Level 2: consumer verticle and partition ownership
 
 Four partitions are shown for clarity; Spec 002 defaults main and retry to
 twelve. Assignment is broker-managed and changes during rebalances. Both roles
@@ -156,7 +158,7 @@ Producer: key = canonical jobId
 Consumer group: job-main-v1
 
 +----------------------------+  +----------------------------+
-| Main worker verticle A     |  | Main worker verticle B     |
+| Main consumer verticle A   |  | Main consumer verticle B   |
 |                            |  |                            |
 | Own Kafka consumer         |  | Own Kafka consumer         |
 | Assigned P0, P1            |  | Assigned P2, P3            |
@@ -167,7 +169,7 @@ Consumer group: job-main-v1
 |          v                 |  |          v                 |
 | ImmediateJobDispatcher L03 |  | ImmediateJobDispatcher L03 |
 |   per-job queues + gates   |  |   per-job queues + gates   |
-|   async JobHandler calls   |  |   async JobHandler calls   |
+|   dispatch to worker pool  |  |   dispatch to worker pool  |
 |          |                 |  |          |                 |
 | OffsetCommitTracker   L02  |  | OffsetCommitTracker   L02  |
 |   safe next offsets        |  |   safe next offsets        |
@@ -179,10 +181,24 @@ Consumer group: job-main-v1
                  Kafka group offsets
 ```
 
-Within a consumer group each partition has one owner at a time; one consumer may
-own several partitions. A worker owns its consumer and serializes queue,
-completion, and commit-state mutations on its Vert.x context. Verticles are
-logical components, not necessarily separate pods or dedicated threads.
+Each role process/pod deploys exactly one consumer verticle. Within a consumer
+group each partition has at most one assigned consumer; one consumer may own
+several partitions or none. The consumer owns the per-partition dispatchers and
+serializes queue, completion, handoff and commit mutations on its context.
+
+The consumer passes jobs, not its Kafka consumer, to an execution pool with
+`min(WORKER_CONCURRENCY, 4)` event-loop verticles. These invoke nonblocking handlers
+and report actual settlement to the consumer. Each execution verticle can host
+multiple asynchronous invocations; pool size is not the concurrency limit.
+The existing adaptive main limit and retry concurrency/rate gates still govern
+starts. Workers do not own partitions, jobId gates or commit rights.
+
+The worker checks assignment activity before invoking a queued job. A start
+racing revocation remains possible; this is not external-effect fencing.
+Handler timeout and latency measurement start at actual invocation, excluding
+the wait for a worker context. The execution pool remains deployed while the
+consumer drains, then closes after it. Verticles are logical components, not
+necessarily dedicated threads.
 
 With fixed partition counts and consistent keyed production, a jobId routes to
 one partition per topic; different IDs can share a partition. The worker
@@ -644,10 +660,12 @@ with explicit spec and recovery-contract changes.
  main-worker (WORKER_ROLE=main)               retry-worker (WORKER_ROLE=retry)
  group job-main-v1, scale N                   group job-retry-v1, scale M
  concurrency adaptive, max 128                concurrency default 2, 1 start/s
-        one KafkaWorker, one ProcessingWindow per process
+        one consumer verticle, one ProcessingWindow per process
+        separate execution verticle pool per process
 ```
 
-`WorkerMain` starts exactly one `KafkaWorker` whose role comes from
+`WorkerMain` uses `WorkerRuntime` to deploy exactly one `ConsumerVerticle`
+containing a `KafkaWorker`, plus a separate execution verticle pool. Its role comes from
 `WORKER_ROLE`. [compose.yaml](compose.yaml) defines `kafka`, `main-worker`,
 `retry-worker`, and a `sample-producer` tool profile; the broker uses a named
 volume. Topics are provisioned idempotently at worker start. The three-broker,
@@ -777,7 +795,7 @@ releases its gate; it need not wait for retry A1 to finish (B06/B07/B12).
 
 - **Status:** Accepted. Alternative retained as a documented option.
 - **Context:** The retry topic could be consumed either (a) by a separate worker process/deployment started with `WORKER_ROLE=retry`, or (b) by an additional retry verticle deployed inside the main worker process alongside the main verticles.
-- **Decision:** Use (a). `WorkerMain` starts exactly one `KafkaWorker` selected by role; Compose runs `main-worker` and `retry-worker` as distinct services scaled independently.
+- **Decision:** Use (a). `WorkerMain` deploys exactly one consumer verticle and a separate execution pool selected by role; Compose runs `main-worker` and `retry-worker` as distinct services scaled independently.
 - **Rationale:**
   - Retry traffic is slower and lower-concurrency by design (default concurrency 2, one start per second per pod); a separate process enforces that limit without competing for the main process's event loops, handler capacity, or `ProcessingWindow`.
   - Failure and restart isolation: a retry storm, slow handler, or crash does not stall or restart main intake, and vice versa.

@@ -29,14 +29,16 @@ jobs:
           distribution: temurin
           java-version: '21'
           cache: maven
-      - name: Test and package
-        run: mvn -B -ntp package
+      - name: Test, package and Kafka integration
+        run: mvn -B -ntp verify
       - name: Upload test reports
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: test-reports
-          path: target/surefire-reports/
+          path: |
+            target/surefire-reports/
+            target/failsafe-reports/
           if-no-files-found: error
           retention-days: 14
       - name: Upload library JAR

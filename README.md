@@ -156,6 +156,16 @@ partitions and rebalance races remain to be tested.
 
 ## Immediate dispatch API
 
+Each main or retry process deploys one consumer verticle and
+`min(WORKER_CONCURRENCY, 4)` execution verticles. Kafka may assign any number
+of the role's partitions, including zero, to that consumer. Execution verticles
+receive handler invocations, not Kafka consumers or partition ownership. They
+are event-loop verticles for nonblocking handlers, not a blocking-worker thread
+pool; the existing per-process concurrency and retry-rate limits still govern
+starts. The execution pool stays available while the consumer drains on
+shutdown. Assignment invalidation suppresses a queued invocation that has not
+passed its start check, but cannot fence an invocation racing ownership loss.
+
 `ImmediateJobDispatcher` owns one topic and a fixed partition assignment on a
 Vert.x event-loop context. Construct and call it on that context. `submit()` takes
 `JobExecution(source, validatedJob, attempt)` and starts a per-job queue head as
