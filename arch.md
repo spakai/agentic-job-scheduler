@@ -210,6 +210,19 @@ one partition per topic; different IDs can share a partition. The worker
 validates the expected keyed partition before dispatch. Changing partition
 counts can remap keys and is an operational migration.
 
+For a non-null key, Kafka's Java default partitioner computes
+`Utils.toPositive(Utils.murmur2(keyBytes)) % partitionCount`. Murmur2 is a fast,
+non-cryptographic hash that gives deterministic, well-distributed key routing.
+`toPositive` clears the sign bit so the result is a valid non-negative
+partition index. The same serialized key and partition count therefore route
+to the same partition; null keys use Kafka's different sticky-partition
+behavior.
+
+`JobRecordEncoder.key` serializes a jobId as its canonical UUID string in UTF-8.
+Producers must use those same bytes and the default keyed partitioning for the
+worker's key/partition validation to pass. A custom partitioner or serializer
+must be coordinated with the worker's validation.
+
 An event loop starts nonblocking operations and processes callbacks; several
 handlers can be in flight while state changes stay serialized. A blocking
 handler needs a bounded executor. L03 marshals handler completions back to the
