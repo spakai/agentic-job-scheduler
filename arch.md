@@ -156,32 +156,26 @@ Producer: key = canonical jobId
        +---------------------------+
        | P0 | P1 | P2 | P3 | ...   |
        +---------------------------+
-          |    |    |    |
-          +--+-+    +--+-+
-             |         |
-             v         v
-       Verticle A   Verticle B
-       owns P0,P1   owns P2,P3
+       Consumer group: job-main-v1
+       Example assignment: P0,P1 -> pod A; P2,P3 -> pod B
 
-Consumer group: job-main-v1
-
-+----------------------------+  +----------------------------+
-| Main consumer verticle A   |  | Main consumer verticle B   |
-|                            |  |                            |
-| Own Kafka consumer         |  | Own Kafka consumer         |
-| Assigned P0, P1            |  | Assigned P2, P3            |
-|          |                 |  |          |                 |
-|          v                 |  |          v                 |
-| EnvelopeValidator     L01  |  | EnvelopeValidator     L01  |
-|          | valid job       |  |          | valid job       |
-|          v                 |  |          v                 |
-| ImmediateJobDispatcher L03 |  | ImmediateJobDispatcher L03 |
-|   per-job queues + gates   |  |   per-job queues + gates   |
-|   dispatch to worker pool  |  |   dispatch to worker pool  |
-|          |                 |  |          |                 |
-| OffsetCommitTracker   L02  |  | OffsetCommitTracker   L02  |
-|   safe next offsets        |  |   safe next offsets        |
-+----------------------------+  +----------------------------+
++----------------------------------+  +----------------------------------+
+| Main worker pod A                |  | Main worker pod B                |
+| One ConsumerVerticle             |  | One ConsumerVerticle             |
+| (the pod's only Kafka poller)    |  | (the pod's only Kafka poller)    |
+| Example assignment: P0, P1       |  | Example assignment: P2, P3       |
+|          |                       |  |          |                       |
+|          v                       |  |          v                       |
+| EnvelopeValidator + dispatcher   |  | EnvelopeValidator + dispatcher   |
+| OffsetCommitTracker (own offsets)|  | OffsetCommitTracker (own offsets)|
+|          | handler calls only     |  |          | handler calls only     |
+|          v                       |  |          v                       |
+| +------------------------------+ |  | +------------------------------+ |
+| | ExecutionVerticlePool        | |  | | ExecutionVerticlePool        | |
+| | min(concurrency, 4) verticles| |  | | min(concurrency, 4) verticles| |
+| | handlers; does not poll Kafka| |  | | handlers; does not poll Kafka| |
+| +------------------------------+ |  | +------------------------------+ |
++----------------------------------+  +----------------------------------+
              |                              |
              +----- explicit commits -------+
                             |
@@ -189,10 +183,13 @@ Consumer group: job-main-v1
                  Kafka group offsets
 ```
 
-Each role process/pod deploys exactly one consumer verticle. Within a consumer
-group each partition has at most one assigned consumer; one consumer may own
-several partitions or none. The consumer owns the per-partition dispatchers and
-serializes queue, completion, handoff and commit mutations on its context.
+Each role process/pod deploys exactly one consumer verticle and one Kafka
+consumer. The two boxes above are separate pods (members of the same group), not
+two polling verticles in one pod. Each consumer polls only its assigned
+partitions. A partition has at most one assigned consumer in the group; a
+consumer may own several partitions or none. The consumer owns the per-partition
+dispatchers and serializes queue, completion, handoff and commit mutations on its
+context.
 
 The consumer passes jobs, not its Kafka consumer, to an execution pool with
 `min(WORKER_CONCURRENCY, 4)` event-loop verticles. These invoke nonblocking handlers
