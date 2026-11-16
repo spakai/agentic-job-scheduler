@@ -1,9 +1,11 @@
 # Architecture documentation (arc42)
 
-Snapshot: 2026-10-20, H03–H06 runtime hardening completed. [Spec 002](specs/002-kafka-job-scheduling.md)
-is the requirements and architecture authority; this document follows the
-[arc42](https://arc42.org) template and records decisions as ADRs (section 9).
-[Spec 001](specs/001-job-lifecycle.md) is historical.
+Snapshot: 2026-11-16, H03–H06 runtime hardening completed; consumer/execution
+verticle separation implemented (see the consumer worker verticles task record).
+[Spec 002](specs/002-kafka-job-scheduling.md) is the requirements and
+architecture authority; this document follows the [arc42](https://arc42.org)
+template and records decisions as ADRs (section 9). [Spec 001](specs/001-job-lifecycle.md)
+is historical.
 
 ---
 
@@ -111,6 +113,7 @@ Out of scope: HTTP clients, databases, external-effect fencing.
 | H03-H04 | `KafkaWorker` capacity redistribution + runnable-head fairness | Enforce the process-wide handler cap and allocate replacement capacity only where runnable job-lane heads exist | dispatcher + runtime assertions |
 | H05-H06 | `TopicProvisioner` and `KafkaWorker` startup policy | Refuse mismatched topic counts and preserve correct offset behavior for new vs. established groups | startup safety checks |
 | L06 | `ProcessingWindow`, `ProcessingWindowKafkaController`, `KafkaWorker` runtime | Bound intake, run main/retry roles, publish acknowledged handoffs, commit safe offsets | 5 window unit + 19 dispatcher + 5 limiter + 2 Kafka integration |
+| Consumer/execution separation | `WorkerRuntime`, `ConsumerVerticle`, `ExecutionVerticlePool` | Keep Kafka ownership and settlement in one consumer verticle; dispatch nonblocking handler calls to separate execution contexts | 3 pool unit + 6 focused Kafka cases |
 
 These are executed cases, including parameterized inputs. L03 tests run real
 Vert.x event loops with controlled handler futures; crash/replay tests use a
@@ -121,7 +124,12 @@ and do not constitute the full B14–B20 suite. Evidence:
 [L03](docs/tasks/L03-immediate-processing.md),
 [L04](docs/tasks/L04-retry-dlq-limiter.md),
 [L05](docs/tasks/L05-replay-rebalances.md), and
-[L06](docs/tasks/L06-backpressure-recovery.md).
+[L06](docs/tasks/L06-backpressure-recovery.md). The consumer/execution
+separation design and focused validation are recorded in the
+[consumer worker verticles task](docs/tasks/consumer-worker-verticles.md).
+On commit `b8b93ad`, `mvn -B -ntp verify` passed with 135 unit tests and 24
+Kafka integration tests; reports are in `target/surefire-reports/` and
+`target/failsafe-reports/`.
 
 Runtime classes (`runtime/`): `WorkerMain` (one role per process), `WorkerRuntime`
 (deployment and drain lifecycle), `ConsumerVerticle` (one Kafka owner per process),
@@ -729,10 +737,10 @@ when its lane and capacity permit; retry records additionally need rate
 permission. Waiting behind another execution or a capacity limit is ordinary
 backpressure (B02–B04/B07).
 
-### ADR 3: Per-job serialization within a topic via keyed partitioning and per-verticle gates
+### ADR 3: Consumer-owned per-job lanes with keyed partitioning and execution verticles
 
 - **Status:** Accepted.
-- **Decision:** Produce with key = jobId using Kafka's default partitioner; the owning verticle keeps FIFO queues per jobId and runs one handler per jobId at a time. Different IDs, even in one partition, run concurrently.
+- **Decision:** Produce with key = jobId using Kafka's default partitioner; the owning consumer verticle keeps FIFO queues and gates per jobId, then dispatches eligible heads to execution verticles. Different IDs, even in one partition, run concurrently.
 - **Alternatives:** One thread per partition (loses cross-job concurrency); global locks or a lock store (violates ADR 1).
 - **Consequences:** Exclusion holds only under stable ownership; rebalance replay can overlap (see section 8). Partition counts are fixed; the worker validates key/partition agreement.
 
@@ -902,6 +910,7 @@ handling or the required DLQ acknowledgment (B01/B05/B17).
 | Newer record finishes before an older one in a partition | Commit stops at the first incomplete record | L02 tests (shuffled schedules) |
 | Retry publication fails after handler failure | Handler not rerun; source uncommitted; gate held; recovers when publish succeeds | `KafkaWorkerIT` |
 | Retained work reaches the high watermark | Partition pauses, polling continues, resumes below 50% | `ProcessingWindowTest`, `ProcessingWindowKafkaIT` |
+| A consumer owns multiple partitions while handler calls use separate contexts | Per-job exclusion and safe partition commits remain with the consumer; shutdown drains before execution verticles stop | `consumerVerticleOwnsMultiplePartitionsAndDispatchesSafely`, `ExecutionVerticlePoolTest`; focused results in the [task record](docs/tasks/consumer-worker-verticles.md) |
 | Malformed/oversized/wrong-partition input | Bounded DLQ record | `KafkaWorkerIT` |
 | Broker restart with queued main work | Work processed after restart | Manual Compose check |
 | Worker crash after success, before commit | Record replays; handler tolerates it | Simulated broker store only |
@@ -927,9 +936,10 @@ The older “unverified” entries above are superseded by the
 [C12 clean regression evidence](docs/tasks/evidence/C12-cooperative-sticky-validation.txt):
 127 unit and 20 Kafka integration tests passed on the recorded working tree.
 Historical L06 evidence remains in the [L06 task record](docs/tasks/L06-backpressure-recovery.md).
-Passing these cases does not close the wider Spec 003/005 requirements. Basic
-[GitHub Actions CI](.github/workflows/maven.yml) runs unit tests/package; required-check
-merge enforcement is a separate repository setting.
+Passing these cases does not close the wider Spec 003/005 requirements. The
+[GitHub Actions workflow](.github/workflows/maven.yml) on this branch runs
+`mvn verify` and uploads unit and integration test reports; the final CI result
+for this branch and required-check merge enforcement have not been verified here.
 
 ---
 

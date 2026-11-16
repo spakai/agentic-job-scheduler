@@ -41,6 +41,7 @@ Status: ready for review
 | Earlier full unit, package, integration | `1a06fc1` + working tree | `mvn -q test && mvn -q package && mvn -q verify` | Unit and package passed; integration failed 1 of 23 cases (retry-rate fourth start) | Earlier local reports; overwritten by focused reruns |
 | Final units | `1a06fc1` + final code diff | `mvn -q test` | Passed | `target/surefire-reports/` at final run |
 | Final focused integrations and artifact | `1a06fc1` + final code diff | `mvn -q -Dtest=ExecutionVerticlePoolTest -Dit.test='KafkaWorkerCooperativeIT,KafkaWorkerIT#consumerVerticleOwnsMultiplePartitionsAndDispatchesSafely+timedOutHandlerRetriesAndReleasesGateOnlyAfterStopConfirmation+handlerTimeoutDoesNotRunWhileInvocationWaitsForWorkerContext+retryWorkerEnforcesConfiguredRateAndConcurrencyAndAdvancesAttempts' verify` | Passed: 3 pool units and 6 Kafka cases; artifact built | `target/surefire-reports/`, `target/failsafe-reports/` at final run |
+| Full branch verification | `b8b93ad` | `mvn -B -ntp verify` | Passed: 135 unit and 24 Kafka integration tests; artifact built | `target/surefire-reports/`, `target/failsafe-reports/` |
 
 ## Failure analysis and correction
 
@@ -50,18 +51,19 @@ Status: ready for review
   undeploys and drains the consumer, then undeploys the pool; the Kafka test
   explicitly exercises shutdown with a blocked handler and queued successor.
 - The corrected targeted run passed on Java 21.
+- The earlier retry-rate failure also passed in the full 24-case integration run
+  on `b8b93ad`; the cause of the initial failure remains unestablished.
 - A follow-up timeout test initially failed because the start callback installed
   the timeout on the worker context. It now returns to the consumer context
   before installing timers; the final focused run passed.
-- The earlier retry-rate failure passed on rerun; its cause is not established.
-  The full final integration suite is delegated to CI, now running `mvn verify`
-  rather than `mvn package` and uploading both test report directories.
+- The full local integration suite passed. The GitHub CI result is still pending;
+  CI now runs `mvn verify` and uploads both test report directories.
 
 ## Handoff and review
 
 - Verified code diff against base `1a06fc1`; publishing as a draft PR.
 - Spec 002, README and `arch.md` describe the new topology and lifecycle.
-- Final full-suite CI results and human review remain pending.
+- Full local verification passed; final CI results and human review remain pending.
 
 ## Learning check
 
