@@ -1,9 +1,11 @@
 # Architecture documentation (arc42)
 
-Snapshot: 2026-10-20, H03–H06 runtime hardening completed. [Spec 002](specs/002-kafka-job-scheduling.md)
-is the requirements and architecture authority; this document follows the
-[arc42](https://arc42.org) template and records decisions as ADRs (section 9).
-[Spec 001](specs/001-job-lifecycle.md) is historical.
+Snapshot: 2026-11-16, H03–H06 runtime hardening completed; consumer/execution
+verticle separation implemented (see the consumer worker verticles task record).
+[Spec 002](specs/002-kafka-job-scheduling.md) is the requirements and
+architecture authority; this document follows the [arc42](https://arc42.org)
+template and records decisions as ADRs (section 9). [Spec 001](specs/001-job-lifecycle.md)
+is historical.
 
 ---
 
@@ -111,6 +113,7 @@ Out of scope: HTTP clients, databases, external-effect fencing.
 | H03-H04 | `KafkaWorker` capacity redistribution + runnable-head fairness | Enforce the process-wide handler cap and allocate replacement capacity only where runnable job-lane heads exist | dispatcher + runtime assertions |
 | H05-H06 | `TopicProvisioner` and `KafkaWorker` startup policy | Refuse mismatched topic counts and preserve correct offset behavior for new vs. established groups | startup safety checks |
 | L06 | `ProcessingWindow`, `ProcessingWindowKafkaController`, `KafkaWorker` runtime | Bound intake, run main/retry roles, publish acknowledged handoffs, commit safe offsets | 5 window unit + 19 dispatcher + 5 limiter + 2 Kafka integration |
+| Consumer/execution separation | `WorkerRuntime`, `ConsumerVerticle`, `ExecutionVerticlePool` | Keep Kafka ownership and settlement in one consumer verticle; dispatch nonblocking handler calls to separate execution contexts | 3 pool unit + 6 focused Kafka cases |
 
 These are executed cases, including parameterized inputs. L03 tests run real
 Vert.x event loops with controlled handler futures; crash/replay tests use a
@@ -121,13 +124,20 @@ and do not constitute the full B14–B20 suite. Evidence:
 [L03](docs/tasks/L03-immediate-processing.md),
 [L04](docs/tasks/L04-retry-dlq-limiter.md),
 [L05](docs/tasks/L05-replay-rebalances.md), and
-[L06](docs/tasks/L06-backpressure-recovery.md).
+[L06](docs/tasks/L06-backpressure-recovery.md). The consumer/execution
+separation design and focused validation are recorded in the
+[consumer worker verticles task](docs/tasks/consumer-worker-verticles.md).
+On commit `b8b93ad`, `mvn -B -ntp verify` passed with 135 unit tests and 24
+Kafka integration tests; reports are in `target/surefire-reports/` and
+`target/failsafe-reports/`.
 
-Runtime classes (`runtime/`): `WorkerMain` (one role per process), `KafkaWorker`
-(consumer group member), `WorkerConfig`/`WorkerRole`, `TopicProvisioner`,
+Runtime classes (`runtime/`): `WorkerMain` (one role per process), `WorkerRuntime`
+(deployment and drain lifecycle), `ConsumerVerticle` (one Kafka owner per process),
+`ExecutionVerticlePool` (nonblocking handler contexts), `KafkaWorker`
+(consumer group member and partition state), `WorkerConfig`/`WorkerRole`, `TopicProvisioner`,
 `JobRecordEncoder`, `DemoJobHandler`, `SampleProducerMain`.
 
-### 5.2 Level 2: worker verticle and partition ownership
+### 5.2 Level 2: consumer verticle and partition ownership
 
 Four partitions are shown for clarity; Spec 002 defaults main and retry to
 twelve. Assignment is broker-managed and changes during rebalances. Both roles
@@ -156,7 +166,7 @@ Producer: key = canonical jobId
 Consumer group: job-main-v1
 
 +----------------------------+  +----------------------------+
-| Main worker verticle A     |  | Main worker verticle B     |
+| Main consumer verticle A   |  | Main consumer verticle B   |
 |                            |  |                            |
 | Own Kafka consumer         |  | Own Kafka consumer         |
 | Assigned P0, P1            |  | Assigned P2, P3            |
@@ -167,7 +177,7 @@ Consumer group: job-main-v1
 |          v                 |  |          v                 |
 | ImmediateJobDispatcher L03 |  | ImmediateJobDispatcher L03 |
 |   per-job queues + gates   |  |   per-job queues + gates   |
-|   async JobHandler calls   |  |   async JobHandler calls   |
+|   dispatch to worker pool  |  |   dispatch to worker pool  |
 |          |                 |  |          |                 |
 | OffsetCommitTracker   L02  |  | OffsetCommitTracker   L02  |
 |   safe next offsets        |  |   safe next offsets        |
@@ -179,10 +189,24 @@ Consumer group: job-main-v1
                  Kafka group offsets
 ```
 
-Within a consumer group each partition has one owner at a time; one consumer may
-own several partitions. A worker owns its consumer and serializes queue,
-completion, and commit-state mutations on its Vert.x context. Verticles are
-logical components, not necessarily separate pods or dedicated threads.
+Each role process/pod deploys exactly one consumer verticle. Within a consumer
+group each partition has at most one assigned consumer; one consumer may own
+several partitions or none. The consumer owns the per-partition dispatchers and
+serializes queue, completion, handoff and commit mutations on its context.
+
+The consumer passes jobs, not its Kafka consumer, to an execution pool with
+`min(WORKER_CONCURRENCY, 4)` event-loop verticles. These invoke nonblocking handlers
+and report actual settlement to the consumer. Each execution verticle can host
+multiple asynchronous invocations; pool size is not the concurrency limit.
+The existing adaptive main limit and retry concurrency/rate gates still govern
+starts. Workers do not own partitions, jobId gates or commit rights.
+
+The worker checks assignment activity before invoking a queued job. A start
+racing revocation remains possible; this is not external-effect fencing.
+Handler timeout and latency measurement start at actual invocation, excluding
+the wait for a worker context. The execution pool remains deployed while the
+consumer drains, then closes after it. Verticles are logical components, not
+necessarily dedicated threads.
 
 With fixed partition counts and consistent keyed production, a jobId routes to
 one partition per topic; different IDs can share a partition. The worker
@@ -644,10 +668,12 @@ with explicit spec and recovery-contract changes.
  main-worker (WORKER_ROLE=main)               retry-worker (WORKER_ROLE=retry)
  group job-main-v1, scale N                   group job-retry-v1, scale M
  concurrency adaptive, max 128                concurrency default 2, 1 start/s
-        one KafkaWorker, one ProcessingWindow per process
+        one consumer verticle, one ProcessingWindow per process
+        separate execution verticle pool per process
 ```
 
-`WorkerMain` starts exactly one `KafkaWorker` whose role comes from
+`WorkerMain` uses `WorkerRuntime` to deploy exactly one `ConsumerVerticle`
+containing a `KafkaWorker`, plus a separate execution verticle pool. Its role comes from
 `WORKER_ROLE`. [compose.yaml](compose.yaml) defines `kafka`, `main-worker`,
 `retry-worker`, and a `sample-producer` tool profile; the broker uses a named
 volume. Topics are provisioned idempotently at worker start. The three-broker,
@@ -711,10 +737,10 @@ when its lane and capacity permit; retry records additionally need rate
 permission. Waiting behind another execution or a capacity limit is ordinary
 backpressure (B02–B04/B07).
 
-### ADR 3: Per-job serialization within a topic via keyed partitioning and per-verticle gates
+### ADR 3: Consumer-owned per-job lanes with keyed partitioning and execution verticles
 
 - **Status:** Accepted.
-- **Decision:** Produce with key = jobId using Kafka's default partitioner; the owning verticle keeps FIFO queues per jobId and runs one handler per jobId at a time. Different IDs, even in one partition, run concurrently.
+- **Decision:** Produce with key = jobId using Kafka's default partitioner; the owning consumer verticle keeps FIFO queues and gates per jobId, then dispatches eligible heads to execution verticles. Different IDs, even in one partition, run concurrently.
 - **Alternatives:** One thread per partition (loses cross-job concurrency); global locks or a lock store (violates ADR 1).
 - **Consequences:** Exclusion holds only under stable ownership; rebalance replay can overlap (see section 8). Partition counts are fixed; the worker validates key/partition agreement.
 
@@ -777,7 +803,7 @@ releases its gate; it need not wait for retry A1 to finish (B06/B07/B12).
 
 - **Status:** Accepted. Alternative retained as a documented option.
 - **Context:** The retry topic could be consumed either (a) by a separate worker process/deployment started with `WORKER_ROLE=retry`, or (b) by an additional retry verticle deployed inside the main worker process alongside the main verticles.
-- **Decision:** Use (a). `WorkerMain` starts exactly one `KafkaWorker` selected by role; Compose runs `main-worker` and `retry-worker` as distinct services scaled independently.
+- **Decision:** Use (a). `WorkerMain` deploys exactly one consumer verticle and a separate execution pool selected by role; Compose runs `main-worker` and `retry-worker` as distinct services scaled independently.
 - **Rationale:**
   - Retry traffic is slower and lower-concurrency by design (default concurrency 2, one start per second per pod); a separate process enforces that limit without competing for the main process's event loops, handler capacity, or `ProcessingWindow`.
   - Failure and restart isolation: a retry storm, slow handler, or crash does not stall or restart main intake, and vice versa.
@@ -884,6 +910,7 @@ handling or the required DLQ acknowledgment (B01/B05/B17).
 | Newer record finishes before an older one in a partition | Commit stops at the first incomplete record | L02 tests (shuffled schedules) |
 | Retry publication fails after handler failure | Handler not rerun; source uncommitted; gate held; recovers when publish succeeds | `KafkaWorkerIT` |
 | Retained work reaches the high watermark | Partition pauses, polling continues, resumes below 50% | `ProcessingWindowTest`, `ProcessingWindowKafkaIT` |
+| A consumer owns multiple partitions while handler calls use separate contexts | Per-job exclusion and safe partition commits remain with the consumer; shutdown drains before execution verticles stop | `consumerVerticleOwnsMultiplePartitionsAndDispatchesSafely`, `ExecutionVerticlePoolTest`; focused results in the [task record](docs/tasks/consumer-worker-verticles.md) |
 | Malformed/oversized/wrong-partition input | Bounded DLQ record | `KafkaWorkerIT` |
 | Broker restart with queued main work | Work processed after restart | Manual Compose check |
 | Worker crash after success, before commit | Record replays; handler tolerates it | Simulated broker store only |
@@ -909,9 +936,10 @@ The older “unverified” entries above are superseded by the
 [C12 clean regression evidence](docs/tasks/evidence/C12-cooperative-sticky-validation.txt):
 127 unit and 20 Kafka integration tests passed on the recorded working tree.
 Historical L06 evidence remains in the [L06 task record](docs/tasks/L06-backpressure-recovery.md).
-Passing these cases does not close the wider Spec 003/005 requirements. Basic
-[GitHub Actions CI](.github/workflows/maven.yml) runs unit tests/package; required-check
-merge enforcement is a separate repository setting.
+Passing these cases does not close the wider Spec 003/005 requirements. The
+[GitHub Actions workflow](.github/workflows/maven.yml) on this branch runs
+`mvn verify` and uploads unit and integration test reports; the final CI result
+for this branch and required-check merge enforcement have not been verified here.
 
 ---
 

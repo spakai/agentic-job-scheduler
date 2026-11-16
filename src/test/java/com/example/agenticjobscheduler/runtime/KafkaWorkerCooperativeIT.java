@@ -159,11 +159,13 @@ class KafkaWorkerCooperativeIT {
     }
 
     private static KafkaWorker worker(Vertx vertx, String bootstrap, WorkerRole role,
-                                      ControlledHandler handler, ProcessingWindow window) {
+                                      ControlledHandler handler, ProcessingWindow window) throws Exception {
         // A long test handler timeout keeps the membership assertions independent of timeout
         // cancellation; the test's bounded waits and explicit promises control settlement.
+        ExecutionVerticlePool workers = ExecutionVerticlePool.deploy(vertx, handler::execute, 3)
+                .toCompletionStage().toCompletableFuture().get(10, TimeUnit.SECONDS);
         return new KafkaWorker(vertx, new WorkerConfig(bootstrap, role, 3, 3, 100),
-                handler::execute, window, 1_000, 120_000, 5_000);
+                workers, window, 1_000, 120_000, 5_000);
     }
 
     private static ProcessingWindow window() {

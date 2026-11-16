@@ -48,12 +48,20 @@ A main failure with remainingAttempts reduced to zero goes directly to DLQ.
 Retry workers execute jobs directly; they do not send them back to the main topic.
 
 Use consumer group `job-main-v1` for main workers and `job-retry-v1` for retry
-workers. A consumer belongs to one verticle and may own multiple partitions.
-Within that verticle, maintain FIFO queues by jobId and run only one handler per
-jobId at a time. Different job IDs, including those in one partition, may run
-concurrently. Worker threads can vary; logical ownership stays with the verticle.
-Serialize queue, completion, and offset mutations on its context. Never block
-the event loop or share a native Kafka consumer across worker threads.
+workers. Each role process/pod deploys one consumer verticle, which owns one
+consumer. A group partition is assigned to at most one consumer at a time; a
+consumer can own multiple partitions or none. The consumer verticle keeps the
+per-partition dispatchers, FIFO jobId queues, completion trackers, and Kafka
+operations on its context. It sends handler invocations, not the consumer, to
+separate execution verticles.
+
+The execution pool has `min(WORKER_CONCURRENCY, 4)` event-loop verticles; each
+can host multiple asynchronous handler invocations. This count does not replace
+the process-wide adaptive or retry limits. Handlers must return promptly and
+offload blocking work to a bounded executor. Different job IDs, including those
+in one partition, may run concurrently. Handler settlement returns to the
+consumer context; it alone performs handoff, completion, and offset mutations.
+Never share the native Kafka consumer across execution verticles.
 
 ## 3. Topic configuration
 
@@ -270,7 +278,11 @@ assignment generation, cancel/drain work within a bounded deadline, and discard
 late callbacks from that generation. Commit only completed prefixes while still
 allowed to commit for the assignment. Do not block the poll thread during drain.
 New owners replay uncommitted records. On shutdown, pause intake, drain up to
-30 seconds, commit safe prefixes, and close clients.
+30 seconds, commit safe prefixes, and close clients. Keep the execution verticles
+available during this drain; stop them after the consumer closes. A work item
+whose assignment is already invalid when an execution verticle checks it must
+not invoke the handler. A start already admitted concurrently with revocation
+can still race ownership loss, so this check is not external-effect fencing.
 
 The simple architecture guarantees per-job exclusion within a stable topic
 owner. It cannot prevent an old worker's external operation from continuing after

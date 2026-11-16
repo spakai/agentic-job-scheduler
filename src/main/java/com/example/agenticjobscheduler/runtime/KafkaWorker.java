@@ -39,6 +39,8 @@ import java.util.TreeMap;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Supplier;
 import java.util.logging.Level;
 import java.util.logging.Logger;
@@ -264,6 +266,7 @@ public final class KafkaWorker {
         for (TopicPartition partition : revoked) {
             PartitionOwner owner = owners.remove(partition);
             if (owner != null) {
+                owner.active.set(false);
                 discardQueuedWork(owner);
                 enqueueCommit(owner);
                 owner.dispatcher.revokeOwnership();
@@ -663,8 +666,8 @@ public final class KafkaWorker {
     }
 
     private Future<Void> executeHandler(PartitionOwner owner, JobExecution execution) {
-        long startedAt = System.nanoTime();
-        Supplier<Future<Void>> operation = () -> executeHandlerWithTimeout(execution);
+        AtomicLong startedAt = new AtomicLong();
+        Supplier<Future<Void>> operation = () -> executeHandlerWithTimeout(owner, execution, startedAt);
         Future<Void> outcome = config.role() == WorkerRole.RETRY
                 ? retryRateGate.submit(
                         () -> !owner.dispatcher.isOwnershipRevoked(),
@@ -684,20 +687,35 @@ public final class KafkaWorker {
                         instanceof com.example.agenticjobscheduler.execution.PermanentJobFailure) {
                     return;
                 }
+                long actualStart = startedAt.get();
+                if (actualStart == 0) {
+                    return;
+                }
                 completedAttempts++;
                 if (result.failed()) {
                     failedAttempts++;
                 }
-                handlerLatencies.add(System.nanoTime() - startedAt);
+                handlerLatencies.add(System.nanoTime() - actualStart);
             }));
         }
         return outcome;
     }
 
-    private Future<Void> executeHandlerWithTimeout(JobExecution execution) {
+    private Future<Void> executeHandlerWithTimeout(PartitionOwner owner, JobExecution execution,
+                                                   AtomicLong startedAt) {
         Future<Void> handlerCompletion;
+        Future<Long> handlerStarted;
         try {
-            handlerCompletion = handler.execute(execution);
+            if (handler instanceof ExecutionVerticlePool pool) {
+                var dispatch = pool.dispatch(execution, owner.active::get, startedAt);
+                handlerStarted = dispatch.started();
+                handlerCompletion = dispatch.completion();
+            } else {
+                long now = System.nanoTime();
+                startedAt.set(now);
+                handlerStarted = Future.succeededFuture(now);
+                handlerCompletion = handler.execute(execution);
+            }
         } catch (RuntimeException failure) {
             return Future.failedFuture(failure);
         }
@@ -708,7 +726,14 @@ public final class KafkaWorker {
         Promise<Void> settled = Promise.promise();
         boolean[] timedOut = {false};
         long[] cancellationReportTimer = {-1};
-        long timeoutTimer = vertx.setTimer(handlerTimeoutMillis, ignored ->
+        long[] timeoutTimer = {-1};
+        handlerStarted.onSuccess(startNanos -> context.runOnContext(ignoredStart -> {
+            if (handlerCompletion.isComplete() || settled.future().isComplete()) {
+                return;
+            }
+            long elapsedMillis = Math.max(0, (System.nanoTime() - startNanos) / 1_000_000);
+            long remainingMillis = Math.max(1, handlerTimeoutMillis - elapsedMillis);
+            timeoutTimer[0] = vertx.setTimer(remainingMillis, ignored ->
                 context.runOnContext(ignoredContext -> {
                     if (handlerCompletion.isComplete() || settled.future().isComplete()) {
                         return;
@@ -726,8 +751,11 @@ public final class KafkaWorker {
                                 }
                             }));
                 }));
+        }));
         handlerCompletion.onComplete(result -> context.runOnContext(ignoredContext -> {
-            vertx.cancelTimer(timeoutTimer);
+            if (timeoutTimer[0] != -1) {
+                vertx.cancelTimer(timeoutTimer[0]);
+            }
             if (cancellationReportTimer[0] != -1) {
                 vertx.cancelTimer(cancellationReportTimer[0]);
             }
@@ -850,6 +878,7 @@ public final class KafkaWorker {
         stopping = true;
         owners.values().forEach(owner -> {
             if (!owner.dispatcher.isOwnershipRevoked()) {
+                owner.active.set(false);
                 discardQueuedWork(owner);
                 owner.dispatcher.revokeOwnership();
             }
@@ -880,6 +909,7 @@ public final class KafkaWorker {
 
     private final class PartitionOwner {
         private final TopicPartition partition;
+        private final AtomicBoolean active = new AtomicBoolean(true);
         private final ImmediateJobDispatcher dispatcher;
         private final TreeMap<Long, ReservationGroup> reservations = new TreeMap<>();
 
