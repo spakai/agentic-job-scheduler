@@ -171,6 +171,11 @@ pods can therefore contribute up to 32 simultaneous in-flight handler
 invocations in aggregate, subject to partition assignment and timing. This is
 different from the one-pod aggregate peak of 16 in the earlier run.
 
+The per-pod graph is generated from separate Docker logs, so it shows Pod 1 and
+Pod 2 independently rather than merging them into one aggregate line. Each
+pod's line plots pod-local `activeAtStart` values and is labeled with that
+pod's partition ownership.
+
 Count successful executions per partition:
 
 ```sh
@@ -226,3 +231,4 @@ The validated live run from 2026-11-18 recorded:
 - [Kafka consumer-group offsets](docs/tasks/evidence/DEMO1200-concurrency-group-offsets.txt)
 - [Concurrency and partition graph](docs/diagrams/demo1200-concurrency.svg)
 - [Two-main-worker live summary](docs/tasks/evidence/DEMO1200-two-main-summary.txt)
+- [Two-main-worker per-pod graph](docs/diagrams/demo1200-two-main-pods.svg)

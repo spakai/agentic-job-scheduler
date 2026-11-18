@@ -67,6 +67,22 @@ fi
 /usr/bin/python3 scripts/generate-demo-concurrency-graph.py \
     "$handler_log" "$DEMO_RUN_ID" "$graph_file"
 
+main_pod_ids=$(docker compose ps -q main-worker)
+pod_index=1
+pod_log_files=()
+for pod_id in $main_pod_ids; do
+    pod_log="docs/tasks/evidence/DEMO1200-main-pod-${pod_index}-concurrency.log"
+    docker logs "$pod_id" > "$pod_log" 2>&1
+    pod_log_files+=("$pod_log")
+    pod_index=$((pod_index + 1))
+done
+
+if (( ${#pod_log_files[@]} == 2)); then
+    /usr/bin/python3 scripts/generate-two-main-pod-concurrency-graph.py \
+        "${pod_log_files[0]}" "${pod_log_files[1]}" \
+        docs/diagrams/demo1200-two-main-pods.svg
+fi
+
 {
     echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) live twelve-partition 1,200-record concurrency and commit run"
     echo "Run ID: ${DEMO_RUN_ID}"
