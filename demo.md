@@ -173,3 +173,4 @@ The validated live run from 2026-11-18 recorded:
 - [Timestamped handler log](docs/tasks/evidence/DEMO1200-concurrency-success-handler-log.txt)
 - [Per-partition handler counts](docs/tasks/evidence/DEMO1200-concurrency-handler-partition-counts.txt)
 - [Kafka consumer-group offsets](docs/tasks/evidence/DEMO1200-concurrency-group-offsets.txt)
+- [Concurrency and partition graph](docs/diagrams/demo1200-concurrency.svg)
