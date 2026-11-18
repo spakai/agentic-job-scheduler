@@ -99,7 +99,8 @@ public final class KafkaWorker {
 
     public KafkaWorker(Vertx vertx, WorkerConfig config, JobHandler handler) {
         this(vertx, config, handler, new ProcessingWindow(
-                MAX_RETAINED_RECORDS, MAX_RETAINED_BYTES, MAX_FETCH_RECORDS, MAX_FETCH_BYTES),
+                config.maxRetainedRecords(), config.maxRetainedBytes(),
+                MAX_FETCH_RECORDS, MAX_FETCH_BYTES),
             DEFAULT_SHUTDOWN_TIMEOUT_MILLIS, DEFAULT_HANDLER_TIMEOUT_MILLIS,
             DEFAULT_CANCELLATION_REPORT_MILLIS);
     }

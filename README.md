@@ -303,7 +303,10 @@ docker compose exec kafka /opt/kafka/bin/kafka-consumer-groups.sh \
   --bootstrap-server localhost:9092 --describe --group job-main-v1
 ```
 
-The load sends exactly 100 records to P0–P11. Each handler log
+The load sends 1,200 records with randomized partition assignments across
+P0–P11; with seed 1200, the Java `Random` distribution is
+`105,100,94,98,108,90,88,122,98,103,97,97`. These are randomized partition counts,
+not fixed 100-per-partition values. Each handler log
 includes an ISO timestamp, `loadSequence`/`loadTotal`, `demoDelayMillis`,
 `activeAtStart`, and `peakActive`. The demo adds a 100 ms handler hold by
 default so concurrent in-flight executions can be observed. The live run
@@ -411,3 +414,6 @@ Pinned dependencies: Vert.x Core and Kafka client 5.2.1, Apache Kafka clients
 and [JUnit 5.14.1](https://docs.junit.org/5.14.1/_exports/junit-user-guide-5.14.1.html).
 L03 aligns Jackson with Vert.x. Record the current dependency scan result in the
 L06 task evidence before claiming the full increment complete.
+For the 1,200-record two-main-worker randomized demo, see
+[demo.md](demo.md) for seed counts, partition distribution, retained-window
+configuration, replay evidence, and per-pod graph links.

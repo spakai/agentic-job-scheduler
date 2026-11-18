@@ -8,6 +8,19 @@ import org.junit.jupiter.api.Test;
 
 class WorkerConfigTest {
     @Test
+    void retainedWindowDefaultsAndCanBeConfigured() {
+        WorkerConfig defaults = WorkerConfig.fromEnvironment(Map.of(
+                "KAFKA_BOOTSTRAP_SERVERS", "localhost:9092",
+                "WORKER_ROLE", "main"));
+        assertEquals(1_000, defaults.maxRetainedRecords());
+
+        WorkerConfig demo = WorkerConfig.fromEnvironment(Map.of(
+                "KAFKA_BOOTSTRAP_SERVERS", "localhost:9092",
+                "WORKER_ROLE", "main",
+                "WORKER_MAX_RETAINED_RECORDS", "250"));
+        assertEquals(250, demo.maxRetainedRecords());
+    }
+    @Test
     void retryStartRateDefaultsAndCanBeConfigured() {
         WorkerConfig defaults = WorkerConfig.fromEnvironment(Map.of(
                 "KAFKA_BOOTSTRAP_SERVERS", "localhost:9092",

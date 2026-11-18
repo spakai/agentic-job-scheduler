@@ -11,8 +11,8 @@ Status: complete
   `docs/explain-job-key-partitioning`; base commit `367dd08`.
 - Authorized scope: demo producer, demo handler logging, Compose defaults,
   focused tests, and documentation.
-- Expected behavior and invariant: publish exactly 100 success records to P0
-  through P11; all 1,200 should stop successfully, appear in timestamped
+- Expected behavior and invariant: publish 1,200 success records with
+  randomized partition assignments; all 1,200 should stop successfully, appear in timestamped
   handler logs, and leave the main consumer group at lag zero.
 - Files/components expected to change: `SampleProducerMain`,
   `DemoJobHandler`, `compose.yaml`, `README.md`, focused unit test, this record.
@@ -46,6 +46,12 @@ P0 through P11. The 100 ms handler hold measured `peakActive=16`.
 processed 600 success records and observed `peakActive=16`; P0-P11 lag stayed
 zero and partition ownership was split across two stable consumer members.
 
+2026-11-18: Updated the demo to randomized partition assignments with seed
+1200. The live result counts were P0-P11
+`[105,100,94,98,108,90,88,122,98,103,97,97]`, totaling 1,200; lag stayed zero.
+The run observed 1,200 unique sequences and 7 replay duplicate handler lines.
+The demo retained window is configurable and set to 250 records per pod.
+
 2026-11-18: Added `scripts/run-demo-1200.sh` and
 `scripts/generate-demo-concurrency-graph.py`. The runner assigns a unique
 `demoRunId`, waits for 1,200 matching handler lines and lag zero, then writes
@@ -55,11 +61,11 @@ the SVG and evidence summary automatically.
 
 | Check | Commit | Command or workflow | Result | Evidence |
 | --- | --- | --- | --- | --- |
-| 12x100 routing | eca1ee9+working | `mvn test` | passed: 137 tests | `target/surefire-reports/` |
+| Random 12-partition routing | current+working | `mvn test` | passed: randomized-total unit test | `target/surefire-reports/` |
 | Library package | eca1ee9+working | `mvn package` | passed | `target/agentic-job-scheduler-0.1.0-SNAPSHOT.jar` |
 | Compose configuration | eca1ee9+working | `docker compose config --quiet` | passed | no artifact |
 | Docker daemon | eca1ee9+working | `docker version --format '{{.Server.Version}}'` | available: 29.3.1 | no artifact |
-| 1,200 live records | working | Docker Compose load | passed: 1,200 accepted, 100 per partition | [summary](evidence/DEMO1200-concurrency-summary.txt) |
+| 1,200 live records | historical equal baseline | Docker Compose load | passed: 1,200 accepted under earlier 100-per-partition mode | [summary](evidence/DEMO1200-concurrency-summary.txt) |
 | 1,200 handler logs | working | Compose worker logs | passed: 1,200 success lines, 1,200 unique sequences | [summary](evidence/DEMO1200-concurrency-summary.txt) |
 | Concurrent in-flight handlers | working | 100 ms demo handler | passed: peakActive=16, bounded by main concurrency | [summary](evidence/DEMO1200-concurrency-summary.txt) |
 | P0-P11 lag zero | working | Kafka consumer-groups describe | passed: zero lag for all 12 partitions | [group offsets](evidence/DEMO1200-concurrency-group-offsets.txt) |

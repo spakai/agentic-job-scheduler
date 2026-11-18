@@ -7,6 +7,8 @@ from pathlib import Path
 def parse_log(path):
     rows = []
     partitions = set()
+    partition_counts = [0] * 12
+    seen_sequences = set()
     peak = 0
     for line in path.read_text().splitlines():
         if "loadMode=success" not in line:
@@ -22,10 +24,13 @@ def parse_log(path):
         peak_value = int(peak_match.group(1))
         partition_value = int(partition.group(1))
         peak = max(peak, peak_value)
-        partitions.add(partition_value)
-        rows.append((sequence_value, active_value))
+        if sequence_value not in seen_sequences:
+            seen_sequences.add(sequence_value)
+            partitions.add(partition_value)
+            partition_counts[partition_value] += 1
+            rows.append((sequence_value, active_value))
     rows.sort()
-    return rows, partitions, peak
+    return rows, partitions, partition_counts, peak
 
 
 if len(sys.argv) != 4:
@@ -33,8 +38,8 @@ if len(sys.argv) != 4:
         "Usage: generate-two-main-pod-concurrency-graph.py POD1_LOG POD2_LOG OUTPUT.svg"
     )
 
-pod1_rows, pod1_partitions, pod1_peak = parse_log(Path(sys.argv[1]))
-pod2_rows, pod2_partitions, pod2_peak = parse_log(Path(sys.argv[2]))
+pod1_rows, pod1_partitions, pod1_counts, pod1_peak = parse_log(Path(sys.argv[1]))
+pod2_rows, pod2_partitions, pod2_counts, pod2_peak = parse_log(Path(sys.argv[2]))
 output = Path(sys.argv[3])
 
 width, height = 1600, 1000
@@ -62,12 +67,12 @@ svg = [
     '.small{font:700 15px sans-serif;fill:#334155}',
     '</style>',
     '<text x="80" y="65" class="title">Two main-worker pods: concurrency and partition ownership</text>',
-    '<text x="80" y="96" class="subtitle">1,200 success records, 600 handlers per pod, P0-P11 split across both consumers</text>',
+    '<text x="80" y="96" class="subtitle">1,200 randomized success records split across P0-P11 and both consumers</text>',
 ]
 
-for pod_index, (rows, partitions, peak) in enumerate(
-    ((pod1_rows, pod1_partitions, pod1_peak),
-     (pod2_rows, pod2_partitions, pod2_peak)),
+for pod_index, (rows, partitions, partition_counts, peak) in enumerate(
+    ((pod1_rows, pod1_partitions, pod1_counts, pod1_peak),
+     (pod2_rows, pod2_partitions, pod2_counts, pod2_peak)),
     start=1,
 ):
     top = panel_top[pod_index - 1]
@@ -92,7 +97,10 @@ for pod_index, (rows, partitions, peak) in enumerate(
                       for sequence, active in rows)
     svg.append('<polyline points="{}" fill="none" stroke="#2563eb" stroke-width="2" stroke-linejoin="round"/>'.format(points))
 
-    partition_label = " ".join("P{}".format(partition) for partition in sorted(partitions))
+    partition_label = " ".join(
+        "P{}={}".format(partition, partition_counts[partition])
+        for partition in sorted(partitions)
+    )
     svg.append('<text x="1510" y="{}" text-anchor="end" class="small">Owned: {}</text>'.format(
         top - 20, partition_label or "none"
     ))

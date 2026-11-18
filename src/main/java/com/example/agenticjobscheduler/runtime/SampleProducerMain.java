@@ -9,7 +9,6 @@ import java.util.concurrent.TimeUnit;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.List;
 import java.util.Random;
 import org.apache.kafka.clients.producer.KafkaProducer;
@@ -73,13 +72,12 @@ public final class SampleProducerMain {
         List<Integer> sendOrder = new ArrayList<>(DEMO_LOAD_COUNT);
         for (int partition = 0; partition < DEMO_PARTITION_COUNT; partition++) {
             acceptedByPartition.put(partition, 0);
-            for (int record = 0; record < DEMO_RECORDS_PER_PARTITION; record++) {
-                sendOrder.add(partition);
-            }
         }
-        Collections.shuffle(sendOrder, new Random(
-                Long.parseLong(System.getenv().getOrDefault(
-                        "DEMO_RANDOM_SEED", "1200"))));
+        Random random = new Random(Long.parseLong(System.getenv().getOrDefault(
+                "DEMO_RANDOM_SEED", "1200")));
+        for (int record = 0; record < DEMO_LOAD_COUNT; record++) {
+            sendOrder.add(random.nextInt(DEMO_PARTITION_COUNT));
+        }
         for (int partition : sendOrder) {
             UUID jobId = jobIdForPartition(partition, DEMO_PARTITION_COUNT);
             var job = sampleJob(fail,
