@@ -24,7 +24,16 @@ per-job queues, safe commits, the runtime boundary, and ADRs 1–10.
 
 ## Kafka polling and event-loop behavior
 
-![Kafka polling and event-loop behavior](docs/diagrams/kafka-poll-event-loop.png)
+<table>
+  <tr>
+    <td><img src="docs/diagrams/kafka-poll-event-loop-overview.png" alt="Kafka polling and event-loop behavior"></td>
+    <td><img src="docs/diagrams/kafka-partition-offset-examples.png" alt="Kafka partition offset and commit examples"></td>
+  </tr>
+  <tr>
+    <td align="center"><strong>Polling and event-loop overview</strong></td>
+    <td align="center"><strong>Partition offset and safe-prefix examples</strong></td>
+  </tr>
+</table>
 
 One consumer verticle is the Kafka poller and owner-context serializer for a
 pod. It can fetch at most two records per poll. Those records enter the
@@ -42,6 +51,14 @@ Kafka intake pauses near the retained-work high watermark (1,000 records or
 16 MiB) and resumes below the configured 50% window level. The consumer
 continues processing retained work and commits only completed record prefixes
 after success or acknowledged retry/DLQ handoff.
+
+For example, an offset is a record number, while the Kafka committed position
+is the next offset: P0 records 10–12 with offsets 10 and 12 complete can
+advance only to 11 because offset 11 is unfinished, assuming 10 was the prior
+next-offset position. After offset 11 completes, P0 may commit 13. P1 can
+independently commit 23 after offsets 20, 21, and 22 complete. P3 cannot commit
+past offsets 40 or 41 even if offset 42 completes first; completion of 40 and 41
+permits the next commit at 43.
 
 See [section 5.2 of the architecture](arch.md#52-level-2-consumer-verticle-and-partition-ownership)
 for the complete partition, ownership, and runtime boundaries.
