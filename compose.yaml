@@ -29,14 +29,12 @@ services:
       start_period: 15s
     restart: unless-stopped
 
-  main-worker:
+  main-worker-a:
     build: .
-    deploy:
-      replicas: 2
     environment:
       KAFKA_BOOTSTRAP_SERVERS: "kafka:9092"
       WORKER_ROLE: "main"
-      WORKER_CONCURRENCY: "${MAIN_WORKER_CONCURRENCY:-16}"
+      WORKER_CONCURRENCY: "${MAIN_WORKER_A_CONCURRENCY:-16}"
       KAFKA_TOPIC_PARTITIONS: "${KAFKA_TOPIC_PARTITIONS:-12}"
       WORKER_MAX_RETAINED_RECORDS: "${WORKER_MAX_RETAINED_RECORDS:-250}"
     depends_on:
@@ -44,13 +42,12 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
-  retry-worker:
+  main-worker-b:
     build: .
     environment:
       KAFKA_BOOTSTRAP_SERVERS: "kafka:9092"
-      WORKER_ROLE: "retry"
-      WORKER_CONCURRENCY: "${RETRY_WORKER_CONCURRENCY:-2}"
-      WORKER_RETRY_STARTS_PER_SECOND: "${RETRY_WORKER_STARTS_PER_SECOND:-1}"
+      WORKER_ROLE: "main"
+      WORKER_CONCURRENCY: "${MAIN_WORKER_B_CONCURRENCY:-8}"
       KAFKA_TOPIC_PARTITIONS: "${KAFKA_TOPIC_PARTITIONS:-12}"
       WORKER_MAX_RETAINED_RECORDS: "${WORKER_MAX_RETAINED_RECORDS:-250}"
     depends_on:

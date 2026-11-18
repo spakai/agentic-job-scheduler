@@ -85,8 +85,8 @@ svg = [
     '.value{font:700 28px sans-serif;fill:#0f172a}',
     '.small{font:700 15px sans-serif;fill:#334155}',
     '</style>',
-    '<text x="80" y="65" class="title">Two main-worker pods: concurrency and partition ownership</text>',
-    '<text x="80" y="96" class="subtitle">1,200 randomized success records split across P0-P11 and both consumers</text>',
+    '<text x="80" y="65" class="title">Main-only demo: Pod A and Pod B concurrency</text>',
+    '<text x="80" y="96" class="subtitle">1,200 randomized success records; Pod A=16 permits; Pod B=8 permits</text>',
 ]
 
 for pod_index, (rows, partitions, partition_counts, peak) in enumerate(
@@ -96,8 +96,9 @@ for pod_index, (rows, partitions, partition_counts, peak) in enumerate(
 ):
     top = panel_top[pod_index - 1]
     bottom = panel_bottom[pod_index - 1]
+    pod_label = "A (16 permits)" if pod_index == 1 else "B (8 permits)"
     svg.append('<text x="80" y="{}" class="label">Main worker {} - {} successful handlers, peakActive={}</text>'.format(
-        top - 20, pod_index, len(rows), peak
+        top - 20, pod_label, len(rows), peak
     ))
     for tick in range(0, max_active + 1, max(1, max_active // 4)):
         tick_y = y(tick, top, bottom)

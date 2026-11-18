@@ -107,7 +107,7 @@ public final class SampleProducerMain {
         }
     }
 
-    private static JobEnvelope sampleJob(boolean fail, int sequence, int total) {
+    static JobEnvelope sampleJob(boolean fail, int sequence, int total) {
         long demoDelayMillis = fail ? 0
                 : Long.parseLong(System.getenv().getOrDefault(
                         "DEMO_HANDLER_DELAY_MILLIS", "100"));
@@ -124,7 +124,7 @@ public final class SampleProducerMain {
             payload.put("demoFail", true);
         }
         return new JobEnvelope(1, UUID.randomUUID(), UUID.randomUUID(),
-                "demo.echo", payload, 3);
+                "demo.echo", payload, 1);
     }
 
     static UUID jobIdForPartition(int expectedPartition, int partitionCount) {

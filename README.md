@@ -296,9 +296,9 @@ docker compose up --scale retry-worker=2 -d
 For the 1,200-record, 12-partition demo:
 
 ```sh
-docker compose up --build --scale main-worker=2 -d
+docker compose up --build -d
 docker compose --profile tools run --rm sample-producer --load-1200
-docker compose logs -f main-worker
+docker compose logs -f main-worker-a main-worker-b
 docker compose exec kafka /opt/kafka/bin/kafka-consumer-groups.sh \
   --bootstrap-server localhost:9092 --describe --group job-main-v1
 ```
@@ -309,9 +309,8 @@ P0–P11; with seed 1200, the Java `Random` distribution is
 not fixed 100-per-partition values. Each handler log
 includes an ISO timestamp, `loadSequence`/`loadTotal`, `demoDelayMillis`,
 `activeAtStart`, and `peakActive`. The demo adds a 100 ms handler hold by
-default so concurrent in-flight executions can be observed. The live run
-measured `peakActive=16` with one main-worker pod. With two main-worker pods,
-each pod contributes independently to aggregate concurrency. This is not proof
+default so concurrent in-flight executions can be observed. The live run measured pod-specific peaks. With Pod A at 16 permits and
+Pod B at 8 permits, aggregate theoretical concurrency is 24. This is not proof
 of 1,000 or 1,200 simultaneous handlers. Success requires 1,200 handled lines,
 no retries/DLQ entries for normal records, and `LAG=0` for P0–P11 in the
 consumer-group describe output. Kafka retains the twelve committed next offsets
