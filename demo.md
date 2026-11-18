@@ -181,10 +181,11 @@ handler lines. Each pod observed `peakActive=16`; the two pods can therefore
 contribute up to 32 simultaneous in-flight handler invocations in aggregate,
 subject to partition assignment and timing.
 
-The per-pod graph is generated from separate Docker logs, so it shows Pod 1 and
-Pod 2 independently rather than merging them into one aggregate line. Each
-pod's line plots pod-local `activeAtStart` values and is labeled with that
-pod's partition ownership.
+The per-pod graph is generated from separate Docker logs and uses timestamps,
+not global loadSequence values, as the X-axis. Each handler entry adds an in-flight
+sample; the graph schedules an estimated completion 100 ms later and decrements
+the actual event-counter active level. Replay duplicates are removed before
+counting unique partition traffic.
 
 Count successful executions per partition:
 
@@ -243,7 +244,7 @@ The validated live run from 2026-11-18 recorded:
 - [Kafka consumer-group offsets](docs/tasks/evidence/DEMO1200-concurrency-group-offsets.txt)
 - [Concurrency and partition graph](docs/diagrams/demo1200-concurrency.svg)
 - [Two-main-worker live summary](docs/tasks/evidence/DEMO1200-two-main-summary.txt)
-- [Two-main-worker per-pod graph](docs/diagrams/demo1200-two-main-pods.svg)
+- [Fresh rerun per-pod graph](docs/diagrams/demo1200-two-main-pods.svg)
 - [Randomized seed-1200 live summary](docs/tasks/evidence/DEMO1200-randomized-summary.txt)
 - [Randomized timestamped handler log](docs/tasks/evidence/DEMO1200-randomized-success-handler-log.txt)
 - [Randomized Kafka group offsets](docs/tasks/evidence/DEMO1200-randomized-group-offsets.txt)
