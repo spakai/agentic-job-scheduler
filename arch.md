@@ -148,7 +148,16 @@ deferred. The [C12 task record](docs/tasks/C12-cooperative-sticky.md) records th
 broker-backed continuity checks and their results; the broader
 [Spec 005](specs/005-partition-reassignment-chaos.md) chaos matrix remains separate.
 
-![Kafka polling and event-loop behavior](docs/diagrams/kafka-poll-event-loop.png)
+<table>
+  <tr>
+    <td><img src="docs/diagrams/kafka-poll-event-loop-overview.png" alt="Kafka polling and event-loop behavior"></td>
+    <td><img src="docs/diagrams/kafka-partition-offset-examples.png" alt="Kafka partition offset and commit examples"></td>
+  </tr>
+  <tr>
+    <td align="center"><strong>Polling and event-loop overview</strong></td>
+    <td align="center"><strong>Partition offset and safe-prefix examples</strong></td>
+  </tr>
+</table>
 
 The diagram is a pod-level view, not a claim that every worker pod has its own
 event-loop thread or dedicated execution thread. Vert.x deploys the consumer

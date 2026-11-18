@@ -24,7 +24,16 @@ per-job queues, safe commits, the runtime boundary, and ADRs 1–10.
 
 ## Kafka polling and event-loop behavior
 
-![Kafka polling and event-loop behavior](docs/diagrams/kafka-poll-event-loop.png)
+<table>
+  <tr>
+    <td><img src="docs/diagrams/kafka-poll-event-loop-overview.png" alt="Kafka polling and event-loop behavior"></td>
+    <td><img src="docs/diagrams/kafka-partition-offset-examples.png" alt="Kafka partition offset and commit examples"></td>
+  </tr>
+  <tr>
+    <td align="center"><strong>Polling and event-loop overview</strong></td>
+    <td align="center"><strong>Partition offset and safe-prefix examples</strong></td>
+  </tr>
+</table>
 
 One consumer verticle is the Kafka poller and owner-context serializer for a
 pod. It can fetch at most two records per poll. Those records enter the
