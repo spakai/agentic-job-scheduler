@@ -16,14 +16,14 @@ export DEMO_RUN_ID DEMO_HANDLER_DELAY_MILLIS DEMO_RANDOM_SEED
 mkdir -p docs/tasks/evidence docs/diagrams
 
 docker compose --profile tools build
-docker compose up --scale main-worker=2 -d
+docker compose up -d
 
 docker compose --profile tools run --rm sample-producer --load-1200 |
   tee /tmp/demo-1200-producer.log
 
 deadline=$((SECONDS + MAX_WAIT_SECONDS))
 while (( SECONDS < deadline)); do
-    docker compose logs main-worker > /tmp/demo-1200-main.log
+    docker compose logs main-worker-a main-worker-b > /tmp/demo-1200-main.log
     handled=$(grep "loadMode=success.*demoRunId=${DEMO_RUN_ID}" \
         /tmp/demo-1200-main.log | wc -l)
     lag_rows=$(docker compose exec -T kafka \
@@ -37,7 +37,7 @@ while (( SECONDS < deadline)); do
     sleep "$POLL_INTERVAL_SECONDS"
 done
 
-docker compose logs main-worker > /tmp/demo-1200-main.log
+docker compose logs main-worker-a main-worker-b > /tmp/demo-1200-main.log
 grep "loadMode=success.*demoRunId=${DEMO_RUN_ID}" \
     /tmp/demo-1200-main.log > "$handler_log"
 
@@ -74,19 +74,14 @@ fi
 /usr/bin/python3 scripts/generate-demo-concurrency-graph.py \
     "$handler_log" "$DEMO_RUN_ID" "$graph_file"
 
-main_pod_ids=$(docker compose ps -q main-worker)
-pod_index=1
-pod_log_files=()
-for pod_id in $main_pod_ids; do
-    pod_log="docs/tasks/evidence/DEMO1200-main-pod-${pod_index}-concurrency.log"
-    docker logs "$pod_id" > "$pod_log" 2>&1
-    pod_log_files+=("$pod_log")
-    pod_index=$((pod_index + 1))
-done
+pod_a_log="docs/tasks/evidence/DEMO1200-main-pod-a-concurrency.log"
+pod_b_log="docs/tasks/evidence/DEMO1200-main-pod-b-concurrency.log"
+docker logs agentic-job-scheduler-main-worker-a-1 > "$pod_a_log" 2>&1
+docker logs agentic-job-scheduler-main-worker-b-1 > "$pod_b_log" 2>&1
 
-if (( ${#pod_log_files[@]} == 2)); then
+if [[ -s "$pod_a_log" && -s "$pod_b_log" ]]; then
     /usr/bin/python3 scripts/generate-two-main-pod-concurrency-graph.py \
-        "${pod_log_files[0]}" "${pod_log_files[1]}" \
+        "$pod_a_log" "$pod_b_log" \
         docs/diagrams/demo1200-two-main-pods.svg
 fi
 

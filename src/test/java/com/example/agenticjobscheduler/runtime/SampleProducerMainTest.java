@@ -10,6 +10,11 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class SampleProducerMainTest {
     @Test
+    void demoJobsStartWithOneRemainingAttempt() {
+        assertEquals(1, SampleProducerMain.sampleJob(false, 1, 1).remainingAttempts());
+    }
+
+    @Test
     void randomizedPartitionCountsRetain1200TotalWithoutFixedPerPartitionCounts() {
         int[] counts = new int[SampleProducerMain.DEMO_PARTITION_COUNT];
         Random random = new Random(1200);

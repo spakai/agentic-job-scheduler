@@ -1,0 +1,7 @@
+2026-11-18 live main-only Pod A16/B8 randomized demo
+Retry pods: 0
+Remaining attempts: 1
+Producer: 1,200 accepted; seed 1200; P0-P11=[105,100,94,98,108,90,88,122,98,103,97,97]
+Pod A: 590 success handlers; concurrency=16; peakActive=13
+Pod B: 610 success handlers; concurrency=8; peakActive=8
+Main consumer lag: zero on P0-P11

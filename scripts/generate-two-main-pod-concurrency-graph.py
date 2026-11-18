@@ -85,8 +85,8 @@ svg = [
     '.value{font:700 28px sans-serif;fill:#0f172a}',
     '.small{font:700 15px sans-serif;fill:#334155}',
     '</style>',
-    '<text x="80" y="65" class="title">Two main-worker pods: concurrency and partition ownership</text>',
-    '<text x="80" y="96" class="subtitle">1,200 randomized success records split across P0-P11 and both consumers</text>',
+    '<text x="80" y="65" class="title">Main-only demo: Pod A and Pod B concurrency</text>',
+    '<text x="80" y="96" class="subtitle">1,200 randomized success records; Pod A=16 permits; Pod B=8 permits</text>',
 ]
 
 for pod_index, (rows, partitions, partition_counts, peak) in enumerate(
@@ -96,21 +96,23 @@ for pod_index, (rows, partitions, partition_counts, peak) in enumerate(
 ):
     top = panel_top[pod_index - 1]
     bottom = panel_bottom[pod_index - 1]
+    pod_label = "A (16 permits)" if pod_index == 1 else "B (8 permits)"
     svg.append('<text x="80" y="{}" class="label">Main worker {} - {} successful handlers, peakActive={}</text>'.format(
-        top - 20, pod_index, len(rows), peak
+        top - 20, pod_label, len(rows), peak
     ))
     for tick in range(0, max_active + 1, max(1, max_active // 4)):
         tick_y = y(tick, top, bottom)
         svg.append('<line x1="105" y1="{:.1f}" x2="1510" y2="{:.1f}" stroke="#e2e8f0"/>'.format(tick_y, tick_y))
         svg.append('<text x="87" y="{:.1f}" text-anchor="end" class="tick">{}</text>'.format(tick_y + 5, tick))
     duration_ms = max(1, (common_end - common_start.timestamp()) * 1000)
-    for tick_ms in (0, 100, 200, 400, 600, 800, 1000):
-        if tick_ms > duration_ms:
-            break
+    tick_step = max(100, round(duration_ms / 8 / 100) * 100)
+    tick_ms = 0
+    while tick_ms <= duration_ms:
         tick_x = left + tick_ms * chart_width / duration_ms
         svg.append('<text x="{:.1f}" y="{:.1f}" text-anchor="middle" class="tick">{}</text>'.format(
             tick_x, bottom + 28, "{} ms".format(tick_ms)
         ))
+        tick_ms += tick_step
     peak_y = y(peak, top, bottom)
     svg.append('<line x1="105" y1="{:.1f}" x2="1510" y2="{:.1f}" stroke="#ef4444" stroke-width="2" stroke-dasharray="9 7"/>'.format(
         peak_y, peak_y
@@ -124,9 +126,8 @@ for pod_index, (rows, partitions, partition_counts, peak) in enumerate(
     active_count = 0
     for event_time, delta in events:
         active_count = max(0, active_count + delta)
-        event_x = left + (event_time - common_start.timestamp()) * chart_width / max(
-            1, (common_end - common_start.timestamp()) * 1000 / 1000
-        )
+        elapsed_ms = (event_time - common_start.timestamp()) * 1000
+        event_x = left + elapsed_ms * chart_width / duration_ms
         timeline_points.append("{:.1f},{:.1f}".format(event_x, y(active_count, top, bottom)))
     points = " ".join(timeline_points)
     svg.append('<polyline points="{}" fill="none" stroke="#2563eb" stroke-width="2" stroke-linejoin="round"/>'.format(points))

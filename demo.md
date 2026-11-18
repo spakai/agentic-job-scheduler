@@ -14,7 +14,7 @@ The demo checks the following observable behavior:
 - The main worker handles all 1,200 jobs and writes an ISO timestamp for each
   successful execution.
 - Load sequence fields are present from 1 through 1,200 and are unique.
-- Every handler success completes normally with `remainingAttempts=3`.
+- Every handler success completes normally with `remainingAttempts=1`.
 - The main consumer group commits independently completed partition prefixes.
 - P0 through P11 reach `LAG=0` in Kafka's consumer-group description.
 - The handler remains in flight for a controlled delay, allowing concurrent
@@ -49,16 +49,17 @@ external-effect fencing. It also does not test retry/DLQ behavior.
 | Producer key | Canonical `jobId` UTF-8 bytes |
 | Partition routing | `toPositive(murmur2(key)) % 12` |
 | Job type | `demo.echo` |
-| Remaining attempts | 3 |
+| Remaining attempts | 1 |
 | Demo mode | `success` |
 | Processing-window bound | 250 records or 16 MiB in demo |
-| Main worker replicas | 2 |
-| Main worker concurrency | `16` per pod |
-| Live aggregate concurrency | up to 32 theoretical, with 16 observed per pod |
+| Main worker replicas | 2 named pods: A and B |
+| Main worker A concurrency | `16` permits |
+| Main worker B concurrency | `8` permits |
+| Live aggregate concurrency | up to 24 theoretical across both pods |
 | Execution verticles | `min(WORKER_CONCURRENCY, 4)` = 4 by default |
 | Handler delay | `100` ms by default |
 | Concurrency evidence | `peakActive` and final `Load concurrency summary` |
-| Retry worker | Running, but no failures should be produced |
+| Retry worker | Not deployed |
 
 `WORKER_CONCURRENCY` is the maximum number of handler invocations that may be
 active concurrently; it is not the number of execution verticles. The main
@@ -82,7 +83,7 @@ From the repository root:
 
 ```sh
 docker compose --profile tools build
-docker compose up --scale main-worker=2 -d
+docker compose up -d
 ```
 
 The main topic and retry topic default to 12 partitions. Kafka topic partition
@@ -176,10 +177,9 @@ ownership split across both Kafka consumers:
 - Member `1035a4a1`: P0, P2, P4, P6, P8, P10
 
 The randomized live run used 1,200 unique sequences with partition counts
-`105,100,94,98,108,90,88,122,98,103,97,97`. It also observed replay duplicate
-handler lines. Each pod observed `peakActive=16`; the two pods can therefore
-contribute up to 32 simultaneous in-flight handler invocations in aggregate,
-subject to partition assignment and timing.
+`105,100,94,98,108,90,88,122,98,103,97,97`. The main-only run used
+`remainingAttempts=1`, so no retry worker was needed. Pod A had 16 permits and
+observed peakActive 13; Pod B had 8 permits and observed peakActive 8.
 
 The per-pod graph is generated from separate Docker logs and uses timestamps,
 not global loadSequence values, as the X-axis. Each handler entry adds an in-flight
