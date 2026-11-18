@@ -47,7 +47,9 @@ external-effect fencing. It also does not test retry/DLQ behavior.
 | Remaining attempts | 3 |
 | Demo mode | `success` |
 | Processing-window bound | 1,000 records or 16 MiB |
-| Main worker concurrency | `16` by default |
+| Main worker replicas | 2 |
+| Main worker concurrency | `16` per pod |
+| Live aggregate concurrency | up to 32 theoretical, with 16 observed per pod |
 | Execution verticles | `min(WORKER_CONCURRENCY, 4)` = 4 by default |
 | Handler delay | `100` ms by default |
 | Concurrency evidence | `peakActive` and final `Load concurrency summary` |
@@ -75,7 +77,7 @@ From the repository root:
 
 ```sh
 docker compose --profile tools build
-docker compose up -d
+docker compose up --scale main-worker=2 -d
 ```
 
 The main topic and retry topic default to 12 partitions. Kafka topic partition
@@ -156,6 +158,19 @@ The summary should report `loadCompleted=1200` and a `peakActive` greater than
 concurrent handler execution in verticle contexts; it does not claim that all
 1,200 or 1,000 records ran simultaneously.
 
+### Two-main-worker live run
+
+The demo starts two main-worker replicas. The live run showed stable partition
+ownership split across both Kafka consumers:
+
+- Member `f2461a65`: P1, P3, P5, P7, P9, P11
+- Member `1035a4a1`: P0, P2, P4, P6, P8, P10
+
+Each pod processed 600 success records and observed `peakActive=16`. The two
+pods can therefore contribute up to 32 simultaneous in-flight handler
+invocations in aggregate, subject to partition assignment and timing. This is
+different from the one-pod aggregate peak of 16 in the earlier run.
+
 Count successful executions per partition:
 
 ```sh
@@ -198,6 +213,8 @@ The run passes only when all of these are true:
 6. Kafka reports lag 0 for P0-P11.
 7. The handler reports `peakActive>1` and
    `Load concurrency summary loadCompleted=1200`.
+8. With two main-worker replicas, both pods report success handlers and
+   aggregate partition ownership covers P0-P11 exactly once.
 
 ## E. Recorded evidence
 
@@ -208,3 +225,4 @@ The validated live run from 2026-11-18 recorded:
 - [Per-partition handler counts](docs/tasks/evidence/DEMO1200-concurrency-handler-partition-counts.txt)
 - [Kafka consumer-group offsets](docs/tasks/evidence/DEMO1200-concurrency-group-offsets.txt)
 - [Concurrency and partition graph](docs/diagrams/demo1200-concurrency.svg)
+- [Two-main-worker live summary](docs/tasks/evidence/DEMO1200-two-main-summary.txt)
