@@ -15,7 +15,7 @@ export DEMO_RUN_ID DEMO_HANDLER_DELAY_MILLIS
 mkdir -p docs/tasks/evidence docs/diagrams
 
 docker compose --profile tools build
-docker compose up -d
+docker compose up --scale main-worker=2 -d
 
 docker compose --profile tools run --rm sample-producer --load-1200 |
   tee /tmp/demo-1200-producer.log

@@ -47,8 +47,12 @@ public final class DemoJobHandler implements JobHandler {
             COMPLETED.incrementAndGet();
             if (execution.job().payload().path("loadMode").asText("-").equals("success")) {
                 int loadCompleted = LOAD_COMPLETED.incrementAndGet();
-                if (execution.job().payload().path("loadTotal").asInt(0) == loadCompleted) {
-                    LOG.info(() -> "Load concurrency summary loadCompleted=" + loadCompleted
+                int loadTotal = execution.job().payload().path("loadTotal").asInt(0);
+                String podName = System.getenv().getOrDefault("HOSTNAME", "unknown");
+                if (loadCompleted % 100 == 0
+                        || (loadTotal > 0 && loadTotal == loadCompleted)) {
+                    LOG.info(() -> "Pod load progress pod=" + podName
+                            + " loadCompleted=" + loadCompleted
                             + " peakActive=" + PEAK_ACTIVE.get());
                 }
             }

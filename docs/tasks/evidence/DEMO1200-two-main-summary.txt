@@ -1,0 +1,9 @@
+2026-11-18 live two-main-worker 1,200-record success run
+Main replicas: 2
+Producer: 1,200 accepted; 100 per P0-P11
+Success handlers: 1,200; unique sequences: 1,200
+Pod main-worker-1: 600 success handlers; peakActive=16
+Pod main-worker-2: 600 success handlers; peakActive=16
+Stable member f2461a65 partitions: P1 P3 P5 P7 P9 P11
+Stable member 1035a4a1 partitions: P0 P2 P4 P6 P8 P10
+Main consumer lag: zero on P0-P11

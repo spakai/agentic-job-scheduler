@@ -1,0 +1,12 @@
+partition 0: 100
+partition 1: 100
+partition 2: 100
+partition 3: 100
+partition 4: 100
+partition 5: 100
+partition 6: 100
+partition 7: 100
+partition 8: 100
+partition 9: 100
+partition 10: 100
+partition 11: 100
