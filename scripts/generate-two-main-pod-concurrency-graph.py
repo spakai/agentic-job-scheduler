@@ -1,6 +1,7 @@
 #!/usr/bin/python3
 import re
 import sys
+from datetime import datetime
 from pathlib import Path
 
 
@@ -17,19 +18,25 @@ def parse_log(path):
         active = re.search(r"activeAtStart=(\d+)", line)
         peak_match = re.search(r"peakActive=(\d+)", line)
         partition = re.search(r"partition=(\d+)", line)
-        if not all((sequence, active, peak_match, partition)):
+        timestamp = re.search(r"timestamp=(\S+)", line)
+        if not all((sequence, active, peak_match, partition, timestamp)):
             continue
         sequence_value = int(sequence.group(1))
         active_value = int(active.group(1))
         peak_value = int(peak_match.group(1))
         partition_value = int(partition.group(1))
+        timestamp_value = timestamp.group(1).replace("Z", "+00:00")
+        try:
+            time_value = datetime.fromisoformat(timestamp_value)
+        except ValueError:
+            continue
         peak = max(peak, peak_value)
         if sequence_value not in seen_sequences:
             seen_sequences.add(sequence_value)
             partitions.add(partition_value)
             partition_counts[partition_value] += 1
-            rows.append((sequence_value, active_value))
-    rows.sort()
+            rows.append((time_value, sequence_value, active_value))
+    rows.sort(key=lambda row: row[0])
     return rows, partitions, partition_counts, peak
 
 
@@ -54,6 +61,18 @@ def x(sequence):
 
 def y(active, top, bottom):
     return bottom - active * (bottom - top) / max_active
+
+all_rows = pod1_rows + pod2_rows
+if all_rows:
+    common_start = min(row[0] for row in all_rows)
+    common_end = max(row[0].timestamp() + 0.100 for row in all_rows)
+else:
+    common_start = datetime.now()
+    common_end = common_start.timestamp() + 0.100
+
+def time_x(time_value):
+    elapsed_ms = (time_value.timestamp() - common_start.timestamp()) * 1000
+    return left + elapsed_ms * chart_width / max(1, (common_end - common_start.timestamp()) * 1000)
 
 svg = [
     '<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1000" viewBox="0 0 1600 1000">',
@@ -84,17 +103,32 @@ for pod_index, (rows, partitions, partition_counts, peak) in enumerate(
         tick_y = y(tick, top, bottom)
         svg.append('<line x1="105" y1="{:.1f}" x2="1510" y2="{:.1f}" stroke="#e2e8f0"/>'.format(tick_y, tick_y))
         svg.append('<text x="87" y="{:.1f}" text-anchor="end" class="tick">{}</text>'.format(tick_y + 5, tick))
-    for sequence in (1, 200, 400, 600, 800, 1000, 1200):
-        tick_x = x(sequence)
+    duration_ms = max(1, (common_end - common_start.timestamp()) * 1000)
+    for tick_ms in (0, 100, 200, 400, 600, 800, 1000):
+        if tick_ms > duration_ms:
+            break
+        tick_x = left + tick_ms * chart_width / duration_ms
         svg.append('<text x="{:.1f}" y="{:.1f}" text-anchor="middle" class="tick">{}</text>'.format(
-            tick_x, bottom + 28, sequence
+            tick_x, bottom + 28, "{} ms".format(tick_ms)
         ))
     peak_y = y(peak, top, bottom)
     svg.append('<line x1="105" y1="{:.1f}" x2="1510" y2="{:.1f}" stroke="#ef4444" stroke-width="2" stroke-dasharray="9 7"/>'.format(
         peak_y, peak_y
     ))
-    points = " ".join("{:.1f},{:.1f}".format(x(sequence), y(active, top, bottom))
-                      for sequence, active in rows)
+    events = []
+    for time_value, sequence_value, active_value in rows:
+        events.append((time_value.timestamp(), 1))
+        events.append((time_value.timestamp() + 0.100, -1))
+    events.sort()
+    timeline_points = []
+    active_count = 0
+    for event_time, delta in events:
+        active_count = max(0, active_count + delta)
+        event_x = left + (event_time - common_start.timestamp()) * chart_width / max(
+            1, (common_end - common_start.timestamp()) * 1000 / 1000
+        )
+        timeline_points.append("{:.1f},{:.1f}".format(event_x, y(active_count, top, bottom)))
+    points = " ".join(timeline_points)
     svg.append('<polyline points="{}" fill="none" stroke="#2563eb" stroke-width="2" stroke-linejoin="round"/>'.format(points))
 
     partition_label = " ".join(
@@ -105,7 +139,7 @@ for pod_index, (rows, partitions, partition_counts, peak) in enumerate(
         top - 20, partition_label or "none"
     ))
 
-svg.append('<text x="807" y="790" text-anchor="middle" class="label">Handler start sequence</text>')
+svg.append('<text x="807" y="790" text-anchor="middle" class="label">Elapsed time (milliseconds)</text>')
 svg.append('<text x="38" y="445" text-anchor="middle" class="label" transform="rotate(-90 38 445)">Active at handler entry</text>')
 svg.append('<text x="80" y="840" class="label">Partition ownership</text>')
 
