@@ -61,6 +61,7 @@ services:
     environment:
       KAFKA_BOOTSTRAP_SERVERS: "kafka:9092"
       KAFKA_TOPIC_PARTITIONS: "${KAFKA_TOPIC_PARTITIONS:-12}"
+      DEMO_HANDLER_DELAY_MILLIS: "${DEMO_HANDLER_DELAY_MILLIS:-100}"
     depends_on:
       kafka:
         condition: service_healthy

@@ -304,12 +304,15 @@ docker compose exec kafka /opt/kafka/bin/kafka-consumer-groups.sh \
 ```
 
 The load sends exactly 100 records to P0–P11. Each handler log
-includes an ISO timestamp and the `loadSequence`/`loadTotal` fields. Success
-requires 1,200 handled lines, no retries/DLQ entries for normal records, and
-`LAG=0` for P0–P11 in the consumer-group describe output. Kafka retains the
-twelve committed next offsets independently; the describe result proves lag zero
-for the current group, while the handler lines prove each load record stopped
-successfully.
+includes an ISO timestamp, `loadSequence`/`loadTotal`, `demoDelayMillis`,
+`activeAtStart`, and `peakActive`. The demo adds a 100 ms handler hold by
+default so concurrent in-flight executions can be observed. The live run
+measured `peakActive=16`; this is bounded by main-worker concurrency, not proof
+of 1,000 or 1,200 simultaneous handlers. Success requires 1,200 handled lines,
+no retries/DLQ entries for normal records, and `LAG=0` for P0–P11 in the
+consumer-group describe output. Kafka retains the twelve committed next offsets
+independently; the describe result proves lag zero for the current group, while
+the handler lines prove each load record stopped successfully.
 
 `WORKER_ROLE` is `main` or `retry`; `KAFKA_BOOTSTRAP_SERVERS`,
 `WORKER_CONCURRENCY`, `KAFKA_TOPIC_PARTITIONS`, and

@@ -1,0 +1,14 @@
+
+GROUP           TOPIC           PARTITION  CURRENT-OFFSET  LOG-END-OFFSET  LAG             CONSUMER-ID                                                 HOST            CLIENT-ID
+job-main-v1     jobs.main.v1    9          300             300             0               consumer-job-main-v1-1-798f0270-9e0e-4839-a60c-890271ac3dff /172.18.0.3     consumer-job-main-v1-1
+job-main-v1     jobs.main.v1    8          300             300             0               consumer-job-main-v1-1-798f0270-9e0e-4839-a60c-890271ac3dff /172.18.0.3     consumer-job-main-v1-1
+job-main-v1     jobs.main.v1    7          300             300             0               consumer-job-main-v1-1-798f0270-9e0e-4839-a60c-890271ac3dff /172.18.0.3     consumer-job-main-v1-1
+job-main-v1     jobs.main.v1    6          300             300             0               consumer-job-main-v1-1-798f0270-9e0e-4839-a60c-890271ac3dff /172.18.0.3     consumer-job-main-v1-1
+job-main-v1     jobs.main.v1    5          300             300             0               consumer-job-main-v1-1-798f0270-9e0e-4839-a60c-890271ac3dff /172.18.0.3     consumer-job-main-v1-1
+job-main-v1     jobs.main.v1    4          300             300             0               consumer-job-main-v1-1-798f0270-9e0e-4839-a60c-890271ac3dff /172.18.0.3     consumer-job-main-v1-1
+job-main-v1     jobs.main.v1    3          300             300             0               consumer-job-main-v1-1-798f0270-9e0e-4839-a60c-890271ac3dff /172.18.0.3     consumer-job-main-v1-1
+job-main-v1     jobs.main.v1    2          300             300             0               consumer-job-main-v1-1-798f0270-9e0e-4839-a60c-890271ac3dff /172.18.0.3     consumer-job-main-v1-1
+job-main-v1     jobs.main.v1    1          301             301             0               consumer-job-main-v1-1-798f0270-9e0e-4839-a60c-890271ac3dff /172.18.0.3     consumer-job-main-v1-1
+job-main-v1     jobs.main.v1    0          301             301             0               consumer-job-main-v1-1-798f0270-9e0e-4839-a60c-890271ac3dff /172.18.0.3     consumer-job-main-v1-1
+job-main-v1     jobs.main.v1    11         300             300             0               consumer-job-main-v1-1-798f0270-9e0e-4839-a60c-890271ac3dff /172.18.0.3     consumer-job-main-v1-1
+job-main-v1     jobs.main.v1    10         300             300             0               consumer-job-main-v1-1-798f0270-9e0e-4839-a60c-890271ac3dff /172.18.0.3     consumer-job-main-v1-1
