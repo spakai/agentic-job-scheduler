@@ -148,6 +148,39 @@ deferred. The [C12 task record](docs/tasks/C12-cooperative-sticky.md) records th
 broker-backed continuity checks and their results; the broader
 [Spec 005](specs/005-partition-reassignment-chaos.md) chaos matrix remains separate.
 
+![Kafka polling and event-loop behavior](docs/diagrams/kafka-poll-event-loop.png)
+
+The diagram is a pod-level view, not a claim that every worker pod has its own
+event-loop thread or dedicated execution thread. Vert.x deploys the consumer
+and execution verticles, while `KafkaWorker`, its partition dispatchers, and
+commit state run on the consumer owner context. One `ConsumerVerticle` polls
+Kafka and fetches at most two records per configured poll batch.
+
+A fetch becomes retained work before dispatch. It remains in the process-wide
+window while queued, running, waiting for retry/DLQ acknowledgment, or
+completed but uncommitted. The window pauses intake at 1,000 records or 16 MiB
+and resumes below half of both adjusted watermarks. Polls stop adding to the
+window while it is paused, but already retained work and Kafka heartbeats
+continue to be serviced. The Kafka client is also configured with the same
+small fetch limits to bound overshoot.
+
+No single Kafka poll pushes every record into handlers. The
+`ImmediateJobDispatcher` admits the batch into per-job and per-partition
+queues, then starts runnable lane heads only while the main adaptive limit or
+retry concurrency/rate gate has capacity. For 100 delivered records, the
+first effect can therefore be 100 retained/queued records, with only the
+currently permitted subset running. Queue wait is separate from handler latency.
+
+Within a stable ownership interval for one topic, one `jobId` has at most one
+running execution on that owner. Different `jobId` values may run concurrently.
+The same `jobId` may run in the main and retry topics independently; replay,
+rebalance movement, and duplicate handoffs remain possible.
+
+The Kafka group offset advances only across a completed record prefix and only
+after the broker acknowledges the matching commit. Handler success and
+acknowledged retry/DLQ handoff advance prefix eligibility; failed publication
+does not rerun the handler and leaves the source incomplete.
+
 ```text
 Producer: key = canonical jobId
               |
