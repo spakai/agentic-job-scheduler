@@ -181,6 +181,40 @@ after the broker acknowledges the matching commit. Handler success and
 acknowledged retry/DLQ handoff advance prefix eligibility; failed publication
 does not rerun the handler and leaves the source incomplete.
 
+#### Concrete offset examples
+
+Kafka commits a **next offset**, not a set of individual record identifiers.
+The examples below assume the partition assignment includes P0–P3 and that all
+record deliveries are retained in offset order:
+
+| Partition | Delivered offsets | Current completion state | Safe continuous commit |
+| --- | --- | --- | --- |
+| P0 | 10, 11, 12 | 10 complete; 11 incomplete; 12 complete out of order | Commit 11; offset 11 blocks P0. After 11 completes, commit 13. |
+| P1 | 20, 21, 22 | 20, 21, 22 complete | Commit 23. |
+| P2 | 7, 8, 9 | 7 complete; 8, 9 incomplete | Commit 8. |
+| P3 | 40, 41, 42 | 42 complete out of order; 40, 41 incomplete | No commit past 40. After 40 and 41 complete, commit 43. |
+
+The P0 example demonstrates an important case: offset 12 may complete before
+offset 11, but P0 cannot bypass offset 11. The P3 example also preserves delivery
+order even though out-of-order completions occur.
+
+After each safe prefix advances and receives broker acknowledgment, independent
+partition commits could be:
+
+```text
+P0 -> 13
+P1 -> 23
+P2 -> 8
+P3 -> 43
+```
+
+Each value is the offset where that partition should continue on replay. P2
+commits 8 because offsets 7 and lower are complete; it does not imply that
+offset 8 or 9 has completed. P0's 13 does not imply completion of records in P1,
+P2, or P3. Commits are independent per partition. A commit snapshot containing
+all four offsets is still sent only after each prefix in that snapshot is safe
+and only one Kafka commit request may be outstanding at a time.
+
 ```text
 Producer: key = canonical jobId
               |
