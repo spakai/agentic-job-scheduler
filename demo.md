@@ -1,14 +1,16 @@
 # 1,200-record Kafka worker demo
 
 This demo verifies the main Kafka worker with enough records to exceed the
-1,000-record processing-window high watermark.
+demo's 250-record processing-window high watermark.
+
+![Two-main-pod demo architecture](docs/diagrams/kafka-poll-event-loop-overview.png)
 
 ## A. What is tested
 
 The demo checks the following observable behavior:
 
 - The producer creates 1,200 distinct success jobs.
-- The Kafka partitioner routes exactly 100 jobs to each of P0 through P11.
+- Partition assignment is randomized across P0 through P11.
 - The main worker handles all 1,200 jobs and writes an ISO timestamp for each
   successful execution.
 - Load sequence fields are present from 1 through 1,200 and are unique.
@@ -22,10 +24,10 @@ The demo checks the following observable behavior:
 - The 100 ms handler hold allows overlap up to the configured main
   concurrency limit. The 1,200 run measured a live peak of 16 in-flight
   handlers; it did not and should not attempt 1,000 simultaneous handlers.
-- The 1,200 records exercise retained backlog above the 1,000-record window.
+- The 1,200 records exercise retained backlog above the demo's 250-record window.
   They do not create 1,200 simultaneous handler executions: the worker's
   adaptive/start limits and execution verticle pool bound true concurrency.
-- Processing continues while retained work exceeds the normal 1,000-record
+- Processing continues while retained work exceeds the demo's 250-record
   window boundary. This run exercises backpressure behavior; it does not prove
   every individual pause/resume transition.
 
@@ -40,13 +42,16 @@ external-effect fencing. It also does not test retry/DLQ behavior.
 | Consumer group | `job-main-v1` |
 | Topic partitions | 12: P0-P11 |
 | Records | 1,200 |
-| Records per partition | 100 |
+| Records per partition | Randomized; total 1,200 |
+| Partition assignment | Uniform random by deterministic seed |
+| Publish order | Randomized naturally by partition assignment |
+| Random seed | `DEMO_RANDOM_SEED=1200` by default |
 | Producer key | Canonical `jobId` UTF-8 bytes |
 | Partition routing | `toPositive(murmur2(key)) % 12` |
 | Job type | `demo.echo` |
 | Remaining attempts | 3 |
 | Demo mode | `success` |
-| Processing-window bound | 1,000 records or 16 MiB |
+| Processing-window bound | 250 records or 16 MiB in demo |
 | Main worker replicas | 2 |
 | Main worker concurrency | `16` per pod |
 | Live aggregate concurrency | up to 32 theoretical, with 16 observed per pod |
@@ -99,12 +104,16 @@ DEMO_HANDLER_DELAY_MILLIS=250 \
 ```
 
 The delay is encoded in each demo record and defaults to 100 ms.
+The partition assignment is selected randomly for each of the 1,200 records
+using a deterministic seed. Changing `DEMO_RANDOM_SEED` changes both
+inter-partition arrival order and the resulting per-partition counts; it keeps
+the total exactly 1,200.
 
 Expected producer output includes:
 
 ```text
 Load complete accepted=1200 topic=jobs.main.v1
-partitionCounts={0=100, 1=100, 2=100, 3=100, 4=100, 5=100, 6=100, 7=100, 8=100, 9=100, 10=100, 11=100}
+partitionCounts={random counts, one value per P0-P11, sum=1200}
 ```
 
 Each publish is acknowledged by Kafka before the producer reports progress.
@@ -166,10 +175,16 @@ ownership split across both Kafka consumers:
 - Member `f2461a65`: P1, P3, P5, P7, P9, P11
 - Member `1035a4a1`: P0, P2, P4, P6, P8, P10
 
-Each pod processed 600 success records and observed `peakActive=16`. The two
-pods can therefore contribute up to 32 simultaneous in-flight handler
-invocations in aggregate, subject to partition assignment and timing. This is
-different from the one-pod aggregate peak of 16 in the earlier run.
+The randomized live run used 1,200 unique sequences with partition counts
+`105,100,94,98,108,90,88,122,98,103,97,97`. It also observed replay duplicate
+handler lines. Each pod observed `peakActive=16`; the two pods can therefore
+contribute up to 32 simultaneous in-flight handler invocations in aggregate,
+subject to partition assignment and timing.
+
+The per-pod graph is generated from separate Docker logs, so it shows Pod 1 and
+Pod 2 independently rather than merging them into one aggregate line. Each
+pod's line plots pod-local `activeAtStart` values and is labeled with that
+pod's partition ownership.
 
 Count successful executions per partition:
 
@@ -180,7 +195,9 @@ grep 'loadMode=success' /tmp/demo-1200-main.log |
   uniq -c
 ```
 
-The output should contain `100` for each partition P0-P11.
+The output should contain the actual randomized counts for P0-P11. With seed
+1200, the Java `Random` distribution is `[105,100,94,98,108,90,88,122,98,103,97,97]`;
+the 12 values sum to 1,200.
 
 ### 4. Verify Kafka committed offsets and lag
 
@@ -206,14 +223,14 @@ that lag reaches zero, not that offsets start at 0.
 The run passes only when all of these are true:
 
 1. The producer reports `accepted=1200`.
-2. It reports 100 records for P0-P11.
+2. It reports randomized record counts whose sum is 1,200.
 3. The main worker logs 1,200 `loadMode=success` executions.
 4. The success log contains 1,200 unique `loadSequence` values.
-5. Each P0-P11 log count is exactly 100.
+5. P0-P11 log counts sum to exactly 1,200.
 6. Kafka reports lag 0 for P0-P11.
 7. The handler reports `peakActive>1` and
    `Load concurrency summary loadCompleted=1200`.
-8. With two main-worker replicas, both pods report success handlers and
+8. With two main-worker replicas, both pods report unique success handlers and
    aggregate partition ownership covers P0-P11 exactly once.
 
 ## E. Recorded evidence
@@ -226,3 +243,7 @@ The validated live run from 2026-11-18 recorded:
 - [Kafka consumer-group offsets](docs/tasks/evidence/DEMO1200-concurrency-group-offsets.txt)
 - [Concurrency and partition graph](docs/diagrams/demo1200-concurrency.svg)
 - [Two-main-worker live summary](docs/tasks/evidence/DEMO1200-two-main-summary.txt)
+- [Two-main-worker per-pod graph](docs/diagrams/demo1200-two-main-pods.svg)
+- [Randomized seed-1200 live summary](docs/tasks/evidence/DEMO1200-randomized-summary.txt)
+- [Randomized timestamped handler log](docs/tasks/evidence/DEMO1200-randomized-success-handler-log.txt)
+- [Randomized Kafka group offsets](docs/tasks/evidence/DEMO1200-randomized-group-offsets.txt)

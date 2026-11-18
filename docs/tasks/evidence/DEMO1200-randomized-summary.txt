@@ -1,0 +1,10 @@
+2026-11-18 live randomized two-main-worker 1,200-record run
+Run ID: random-1200-20261118T031018Z
+Producer: 1,200 accepted; seed 1200; partition counts P0-P11=[105,100,94,98,108,90,88,122,98,103,97,97]
+Unique success sequences: 1200
+Handler log lines including replay duplicates: 1207
+Duplicate replay sequences: 263,265,268,269,273,275,277
+Pod main-worker-1 handler lines: 467
+Pod main-worker-2 handler lines: 740
+Main consumer lag: 0 on P0-P11
+Retained window: 250 records or 16 MiB per pod

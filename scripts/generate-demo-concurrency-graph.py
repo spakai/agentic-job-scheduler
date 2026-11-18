@@ -20,6 +20,7 @@ run_id = sys.argv[2]
 output = Path(sys.argv[3])
 
 rows = []
+seen_sequences = set()
 partition_counts = [0] * 12
 for line in log_file.read_text().splitlines():
     if "demoRunId={}".format(run_id) not in line:
@@ -28,7 +29,9 @@ for line in log_file.read_text().splitlines():
     active = int(required_match(r"activeAtStart=(\d+)", line, "activeAtStart"))
     peak = int(required_match(r"peakActive=(\d+)", line, "peakActive"))
     partition = int(required_match(r"partition=(\d+)", line, "partition"))
-    rows.append((sequence, active, peak))
+    if sequence not in seen_sequences:
+        seen_sequences.add(sequence)
+        rows.append((sequence, active, peak))
     if 0 <= partition < 12:
         partition_counts[partition] += 1
 
@@ -96,9 +99,10 @@ svg.append('<polyline points="{}" fill="none" stroke="#2563eb" stroke-width="2" 
 
 svg.append('<text x="80" y="640" class="label">Successful handlers by Kafka partition</text>')
 bar_start = (width - (12 * 95 + 11 * 22)) / 2
+max_partition_count = max(partition_counts, default=1)
 for partition, count in enumerate(partition_counts):
     bar_x = bar_start + partition * 117
-    bar_height = count / 100 * 100
+    bar_height = count / max_partition_count * 100
     bar_y = 820 - bar_height
     svg.append('<rect x="{:.1f}" y="{:.1f}" width="95" height="{:.1f}" rx="5" fill="#14b8a6"/>'.format(bar_x, bar_y, bar_height))
     svg.append('<text x="{:.1f}" y="{:.1f}" text-anchor="middle" class="small">{}</text>'.format(bar_x + 47.5, bar_y - 10, count))
