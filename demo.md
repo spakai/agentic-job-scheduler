@@ -107,6 +107,26 @@ partitionCounts={0=100, 1=100, 2=100, 3=100, 4=100, 5=100, 6=100, 7=100, 8=100, 
 
 Each publish is acknowledged by Kafka before the producer reports progress.
 
+### Generate the graph automatically after completion
+
+Run the complete demo and graph workflow:
+
+```sh
+./scripts/run-demo-1200.sh
+```
+
+The script uses a unique `DEMO_RUN_ID`, publishes 1,200 success records,
+waits for 1,200 matching handler lines and zero main-group lag, and writes:
+
+```text
+docs/diagrams/demo1200-concurrency.svg
+docs/tasks/evidence/DEMO1200-concurrency-success-handler-log.txt
+docs/tasks/evidence/DEMO1200-concurrency-summary.txt
+```
+
+It does not continue when processing never reaches the success criteria. Set
+`DEMO_HANDLER_DELAY_MILLIS` to change the artificial handler hold.
+
 ### 3. Capture timestamped main-worker logs
 
 ```sh
