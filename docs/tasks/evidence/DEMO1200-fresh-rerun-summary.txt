@@ -1,0 +1,8 @@
+2026-11-18 fresh randomized two-main-worker rerun
+Run ID: fresh run
+Producer: 1,200 accepted; seed 1200; partition counts P0-P11=[105,100,94,98,108,90,88,122,98,103,97,97]
+Success handlers: 1,200 unique sequences
+Pod main-worker-1: 590 success handlers; peakActive=16
+Pod main-worker-2: 610 success handlers; peakActive=16
+Main consumer lag: zero on P0-P11
+Per-pod graph timestamp: 2026-11-18 11:46:09 +0800

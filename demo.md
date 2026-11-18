@@ -244,7 +244,7 @@ The validated live run from 2026-11-18 recorded:
 - [Kafka consumer-group offsets](docs/tasks/evidence/DEMO1200-concurrency-group-offsets.txt)
 - [Concurrency and partition graph](docs/diagrams/demo1200-concurrency.svg)
 - [Two-main-worker live summary](docs/tasks/evidence/DEMO1200-two-main-summary.txt)
-- [Two-main-worker per-pod graph](docs/diagrams/demo1200-two-main-pods.svg)
+- [Fresh rerun per-pod graph](docs/diagrams/demo1200-two-main-pods.svg)
 - [Randomized seed-1200 live summary](docs/tasks/evidence/DEMO1200-randomized-summary.txt)
 - [Randomized timestamped handler log](docs/tasks/evidence/DEMO1200-randomized-success-handler-log.txt)
 - [Randomized Kafka group offsets](docs/tasks/evidence/DEMO1200-randomized-group-offsets.txt)
