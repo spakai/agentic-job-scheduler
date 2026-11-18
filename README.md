@@ -22,6 +22,30 @@ unconfirmed cancellation remains incomplete.
 See the [arc42 architecture documentation](arch.md) for topic ownership,
 per-job queues, safe commits, the runtime boundary, and ADRs 1–10.
 
+## Kafka polling and event-loop behavior
+
+![Kafka polling and event-loop behavior](docs/diagrams/kafka-poll-event-loop.png)
+
+One consumer verticle is the Kafka poller and owner-context serializer for a
+pod. It can fetch at most two records per poll. Those records enter the
+process-wide retained-work window and partition dispatch queues; they do not
+all become immediate handler calls.
+
+The execution pool has
+`min(WORKER_CONCURRENCY, 4)` execution verticles. The main adaptive limit and
+retry concurrency/rate gates decide how many queued heads can start. A stable
+topic owner permits one execution for a `jobId` at a time, while different
+`jobId` values may run concurrently. Main and retry workers are separate and
+may overlap for the same `jobId`.
+
+Kafka intake pauses near the retained-work high watermark (1,000 records or
+16 MiB) and resumes below the configured 50% window level. The consumer
+continues processing retained work and commits only completed record prefixes
+after success or acknowledged retry/DLQ handoff.
+
+See [section 5.2 of the architecture](arch.md#52-level-2-consumer-verticle-and-partition-ownership)
+for the complete partition, ownership, and runtime boundaries.
+
 ## Build and test
 
 Requirements: JDK 21 or newer and Maven 3.6.3 or newer. Compilation targets Java
