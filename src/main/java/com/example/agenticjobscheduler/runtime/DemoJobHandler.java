@@ -3,6 +3,7 @@ package com.example.agenticjobscheduler.runtime;
 import com.example.agenticjobscheduler.execution.JobExecution;
 import com.example.agenticjobscheduler.execution.JobHandler;
 import io.vertx.core.Future;
+import java.time.Instant;
 import java.util.logging.Logger;
 
 /** Replay-safe demo handler with no irreversible external effects. */
@@ -13,8 +14,12 @@ public final class DemoJobHandler implements JobHandler {
     public Future<Void> execute(JobExecution execution) {
         boolean fail = execution.job().payload().path("demoFail").asBoolean(false);
         LOG.info(() -> (fail ? "Demo failure jobType=" : "Handled jobType=") + execution.job().jobType()
+                + " timestamp=" + Instant.now()
                 + " jobId=" + execution.job().jobId()
                 + " executionId=" + execution.job().executionId()
+                + " loadSequence=" + execution.job().payload().path("loadSequence").asText("-")
+                + " loadTotal=" + execution.job().payload().path("loadTotal").asText("-")
+                + " loadMode=" + execution.job().payload().path("loadMode").asText("-")
                 + " attempt=" + execution.attempt()
                 + " remainingAttempts=" + execution.job().remainingAttempts()
                 + " topic=" + execution.source().topic()

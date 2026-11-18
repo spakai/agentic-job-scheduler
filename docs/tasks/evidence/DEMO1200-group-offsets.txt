@@ -1,0 +1,14 @@
+
+GROUP           TOPIC           PARTITION  CURRENT-OFFSET  LOG-END-OFFSET  LAG             CONSUMER-ID                                                 HOST            CLIENT-ID
+job-main-v1     jobs.main.v1    9          200             200             0               consumer-job-main-v1-1-eee8d94c-478a-4b42-9247-807c40491233 /172.18.0.3     consumer-job-main-v1-1
+job-main-v1     jobs.main.v1    8          200             200             0               consumer-job-main-v1-1-eee8d94c-478a-4b42-9247-807c40491233 /172.18.0.3     consumer-job-main-v1-1
+job-main-v1     jobs.main.v1    7          200             200             0               consumer-job-main-v1-1-eee8d94c-478a-4b42-9247-807c40491233 /172.18.0.3     consumer-job-main-v1-1
+job-main-v1     jobs.main.v1    6          200             200             0               consumer-job-main-v1-1-eee8d94c-478a-4b42-9247-807c40491233 /172.18.0.3     consumer-job-main-v1-1
+job-main-v1     jobs.main.v1    5          200             200             0               consumer-job-main-v1-1-eee8d94c-478a-4b42-9247-807c40491233 /172.18.0.3     consumer-job-main-v1-1
+job-main-v1     jobs.main.v1    4          200             200             0               consumer-job-main-v1-1-eee8d94c-478a-4b42-9247-807c40491233 /172.18.0.3     consumer-job-main-v1-1
+job-main-v1     jobs.main.v1    3          200             200             0               consumer-job-main-v1-1-eee8d94c-478a-4b42-9247-807c40491233 /172.18.0.3     consumer-job-main-v1-1
+job-main-v1     jobs.main.v1    2          200             200             0               consumer-job-main-v1-1-eee8d94c-478a-4b42-9247-807c40491233 /172.18.0.3     consumer-job-main-v1-1
+job-main-v1     jobs.main.v1    1          201             201             0               consumer-job-main-v1-1-eee8d94c-478a-4b42-9247-807c40491233 /172.18.0.3     consumer-job-main-v1-1
+job-main-v1     jobs.main.v1    0          201             201             0               consumer-job-main-v1-1-eee8d94c-478a-4b42-9247-807c40491233 /172.18.0.3     consumer-job-main-v1-1
+job-main-v1     jobs.main.v1    11         200             200             0               consumer-job-main-v1-1-eee8d94c-478a-4b42-9247-807c40491233 /172.18.0.3     consumer-job-main-v1-1
+job-main-v1     jobs.main.v1    10         200             200             0               consumer-job-main-v1-1-eee8d94c-478a-4b42-9247-807c40491233 /172.18.0.3     consumer-job-main-v1-1
