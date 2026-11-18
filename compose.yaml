@@ -65,6 +65,7 @@ services:
       KAFKA_TOPIC_PARTITIONS: "${KAFKA_TOPIC_PARTITIONS:-12}"
       DEMO_HANDLER_DELAY_MILLIS: "${DEMO_HANDLER_DELAY_MILLIS:-100}"
       DEMO_RUN_ID: "${DEMO_RUN_ID:-}"
+      DEMO_RANDOM_SEED: "${DEMO_RANDOM_SEED:-1200}"
     depends_on:
       kafka:
         condition: service_healthy

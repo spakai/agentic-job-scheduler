@@ -8,6 +8,10 @@ import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
+import java.util.Random;
 import org.apache.kafka.clients.producer.KafkaProducer;
 import org.apache.kafka.clients.producer.ProducerConfig;
 import org.apache.kafka.clients.producer.ProducerRecord;
@@ -66,25 +70,32 @@ public final class SampleProducerMain {
         Map<Integer, Integer> acceptedByPartition = new LinkedHashMap<>();
         Map<Integer, Long> firstOffsetByPartition = new LinkedHashMap<>();
         Map<Integer, Long> lastOffsetByPartition = new LinkedHashMap<>();
+        List<Integer> sendOrder = new ArrayList<>(DEMO_LOAD_COUNT);
         for (int partition = 0; partition < DEMO_PARTITION_COUNT; partition++) {
             acceptedByPartition.put(partition, 0);
             for (int record = 0; record < DEMO_RECORDS_PER_PARTITION; record++) {
-                UUID jobId = jobIdForPartition(partition, DEMO_PARTITION_COUNT);
-                var job = sampleJob(fail,
-                        sequence.incrementAndGet(),
-                        DEMO_LOAD_COUNT);
-                job = new JobEnvelope(job.schemaVersion(), jobId, job.executionId(),
-                        job.jobType(), job.payload(), job.remainingAttempts());
-                var metadata = producer.send(new ProducerRecord<>(TopicProvisioner.MAIN_TOPIC,
-                        partition, JobRecordEncoder.key(job.jobId()), JobRecordEncoder.main(job)))
-                        .get(30, TimeUnit.SECONDS);
-                acceptedByPartition.put(partition, acceptedByPartition.get(partition) + 1);
-                firstOffsetByPartition.putIfAbsent(partition, metadata.offset());
-                lastOffsetByPartition.put(partition, metadata.offset());
-                if (sequence.get() % 100 == 0) {
-                    System.out.println("Load progress accepted=" + sequence.get()
-                            + " total=" + DEMO_LOAD_COUNT);
-                }
+                sendOrder.add(partition);
+            }
+        }
+        Collections.shuffle(sendOrder, new Random(
+                Long.parseLong(System.getenv().getOrDefault(
+                        "DEMO_RANDOM_SEED", "1200"))));
+        for (int partition : sendOrder) {
+            UUID jobId = jobIdForPartition(partition, DEMO_PARTITION_COUNT);
+            var job = sampleJob(fail,
+                    sequence.incrementAndGet(),
+                    DEMO_LOAD_COUNT);
+            job = new JobEnvelope(job.schemaVersion(), jobId, job.executionId(),
+                    job.jobType(), job.payload(), job.remainingAttempts());
+            var metadata = producer.send(new ProducerRecord<>(TopicProvisioner.MAIN_TOPIC,
+                    partition, JobRecordEncoder.key(job.jobId()), JobRecordEncoder.main(job)))
+                    .get(30, TimeUnit.SECONDS);
+            acceptedByPartition.put(partition, acceptedByPartition.get(partition) + 1);
+            firstOffsetByPartition.putIfAbsent(partition, metadata.offset());
+            lastOffsetByPartition.put(partition, metadata.offset());
+            if (sequence.get() % 100 == 0) {
+                System.out.println("Load progress accepted=" + sequence.get()
+                        + " total=" + DEMO_LOAD_COUNT);
             }
         }
         System.out.println("Load complete accepted=" + sequence.get()

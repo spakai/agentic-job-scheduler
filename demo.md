@@ -41,6 +41,8 @@ external-effect fencing. It also does not test retry/DLQ behavior.
 | Topic partitions | 12: P0-P11 |
 | Records | 1,200 |
 | Records per partition | 100 |
+| Publish order | Randomized by deterministic seed |
+| Random seed | `DEMO_RANDOM_SEED=1200` by default |
 | Producer key | Canonical `jobId` UTF-8 bytes |
 | Partition routing | `toPositive(murmur2(key)) % 12` |
 | Job type | `demo.echo` |
@@ -99,6 +101,9 @@ DEMO_HANDLER_DELAY_MILLIS=250 \
 ```
 
 The delay is encoded in each demo record and defaults to 100 ms.
+The publish order is shuffled deterministically before sending. Changing
+`DEMO_RANDOM_SEED` changes the inter-partition arrival order; it does not
+change the per-partition count of 100 records.
 
 Expected producer output includes:
 
