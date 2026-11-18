@@ -99,11 +99,15 @@ public final class SampleProducerMain {
     }
 
     private static JobEnvelope sampleJob(boolean fail, int sequence, int total) {
+        long demoDelayMillis = fail ? 0
+                : Long.parseLong(System.getenv().getOrDefault(
+                        "DEMO_HANDLER_DELAY_MILLIS", "100"));
         var payload = JsonNodeFactory.instance.objectNode()
                 .put("message", "hello from the sample producer")
                 .put("loadSequence", sequence)
                 .put("loadTotal", total)
-                .put("loadMode", fail ? "failure" : "success");
+                .put("loadMode", fail ? "failure" : "success")
+                .put("demoDelayMillis", demoDelayMillis);
         if (fail) {
             payload.put("demoFail", true);
         }

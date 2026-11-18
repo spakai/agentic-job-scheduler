@@ -15,6 +15,16 @@ The demo checks the following observable behavior:
 - Every handler success completes normally with `remainingAttempts=3`.
 - The main consumer group commits independently completed partition prefixes.
 - P0 through P11 reach `LAG=0` in Kafka's consumer-group description.
+- The handler remains in flight for a controlled delay, allowing concurrent
+  executions to overlap across execution verticles.
+- The log reports `peakActive` and a final
+  `Load concurrency summary` for the successful load.
+- The 100 ms handler hold allows overlap up to the configured main
+  concurrency limit. The 1,200 run measured a live peak of 16 in-flight
+  handlers; it did not and should not attempt 1,000 simultaneous handlers.
+- The 1,200 records exercise retained backlog above the 1,000-record window.
+  They do not create 1,200 simultaneous handler executions: the worker's
+  adaptive/start limits and execution verticle pool bound true concurrency.
 - Processing continues while retained work exceeds the normal 1,000-record
   window boundary. This run exercises backpressure behavior; it does not prove
   every individual pause/resume transition.
@@ -38,6 +48,9 @@ external-effect fencing. It also does not test retry/DLQ behavior.
 | Demo mode | `success` |
 | Processing-window bound | 1,000 records or 16 MiB |
 | Main worker concurrency | `16` by default |
+| Execution verticles | `min(WORKER_CONCURRENCY, 4)` = 4 by default |
+| Handler delay | `100` ms by default |
+| Concurrency evidence | `peakActive` and final `Load concurrency summary` |
 | Retry worker | Running, but no failures should be produced |
 
 ## C. How to run
@@ -89,6 +102,17 @@ grep 'loadMode=success' /tmp/demo-1200-main.log |
 
 Both commands should report `1200`.
 
+Verify that the same log reports overlapping execution:
+
+```sh
+grep 'Load concurrency summary' /tmp/demo-1200-main.log
+```
+
+The summary should report `loadCompleted=1200` and a `peakActive` greater than
+1. The validated default run reported `peakActive=16`. This demonstrates
+concurrent handler execution in verticle contexts; it does not claim that all
+1,200 or 1,000 records ran simultaneously.
+
 Count successful executions per partition:
 
 ```sh
@@ -129,12 +153,14 @@ The run passes only when all of these are true:
 4. The success log contains 1,200 unique `loadSequence` values.
 5. Each P0-P11 log count is exactly 100.
 6. Kafka reports lag 0 for P0-P11.
+7. The handler reports `peakActive>1` and
+   `Load concurrency summary loadCompleted=1200`.
 
 ## E. Recorded evidence
 
 The validated live run from 2026-11-18 recorded:
 
-- [Success summary](docs/tasks/evidence/DEMO1200-summary.txt)
-- [Timestamped handler log](docs/tasks/evidence/DEMO1200-success-handler-log.txt)
-- [Per-partition handler counts](docs/tasks/evidence/DEMO1200-handler-partition-counts.txt)
-- [Kafka consumer-group offsets](docs/tasks/evidence/DEMO1200-group-offsets.txt)
+- [Concurrency success summary](docs/tasks/evidence/DEMO1200-concurrency-summary.txt)
+- [Timestamped handler log](docs/tasks/evidence/DEMO1200-concurrency-success-handler-log.txt)
+- [Per-partition handler counts](docs/tasks/evidence/DEMO1200-concurrency-handler-partition-counts.txt)
+- [Kafka consumer-group offsets](docs/tasks/evidence/DEMO1200-concurrency-group-offsets.txt)

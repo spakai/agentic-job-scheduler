@@ -37,9 +37,10 @@ and ISO/timestamp plus load-sequence/mode handler logging. The first live trial
 set the failure flag incorrectly; after correcting `--fail` detection, the
 success load was rebuilt and rerun.
 
-2026-11-18: Live run passed: producer accepted 1,200 records (100 each on P0
-through P11); 1,200 timestamped `loadMode=success` handler lines and 1,200
-unique sequences were observed; Kafka group lag was zero on P0 through P11.
+2026-11-18: Live concurrency run passed: producer accepted 1,200 records
+(100 each on P0 through P11); 1,200 timestamped `loadMode=success` handler
+lines and 1,200 unique sequences were observed; Kafka group lag was zero on
+P0 through P11. The 100 ms handler hold measured `peakActive=16`.
 
 ## Evaluation
 
@@ -50,8 +51,9 @@ unique sequences were observed; Kafka group lag was zero on P0 through P11.
 | Compose configuration | 74622b2+working | `docker compose config --quiet` | passed | no artifact |
 | Docker daemon | 74622b2+working | `docker version --format '{{.Server.Version}}'` | available: 29.3.1 | no artifact |
 | 1,200 live records | working | Docker Compose load | passed: 1,200 accepted, 100 per partition | [summary](evidence/DEMO1200-summary.txt) |
-| 1,200 handler logs | working | Compose worker logs | passed: 1,200 success lines, 1,200 unique sequences | [summary](evidence/DEMO1200-summary.txt) |
-| P0-P11 lag zero | working | Kafka consumer-groups describe | passed: zero lag for all 12 partitions | [group offsets](evidence/DEMO1200-group-offsets.txt) |
+| 1,200 handler logs | working | Compose worker logs | passed: 1,200 success lines, 1,200 unique sequences | [summary](evidence/DEMO1200-concurrency-summary.txt) |
+| Concurrent in-flight handlers | working | 100 ms demo handler | passed: peakActive=16, bounded by main concurrency | [summary](evidence/DEMO1200-concurrency-summary.txt) |
+| P0-P11 lag zero | working | Kafka consumer-groups describe | passed: zero lag for all 12 partitions | [group offsets](evidence/DEMO1200-concurrency-group-offsets.txt) |
 
 ## Failure analysis and correction
 
@@ -73,8 +75,9 @@ enable failure only for `--fail`, and the success run was rebuilt and verified.
 
 - What invariant did this task establish: 1,200 records distributed evenly
   across twelve partitions must be processed within retained-work and commit
-  boundaries.
+  boundaries, while only the configured concurrency limit may execute
+  handlers simultaneously.
 - What failure would invalidate the claim: missing handler logs, any partition
-  count not 100, or nonzero consumer-group lag.
+  count not 100, `peakActive` not above 1, or nonzero consumer-group lag.
 - Which artifact proves what actually happened: timestamped handler logs,
   producer per-partition offsets, and Kafka group describe output.
