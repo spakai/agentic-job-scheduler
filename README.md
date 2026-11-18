@@ -279,7 +279,7 @@ See the [L06 task record](docs/tasks/L06-backpressure-recovery.md) for earlier e
 
 The Compose demo runs a single-broker KRaft Kafka, separate main and retry consumer
 groups, and a persistent named volume. The worker provisions `jobs.main.v1` and
-`jobs.retry.v1` with 12 partitions by default and `jobs.dlq.v1` with 3. The demo
+`jobs.retry.v1` with 4 partitions by default and `jobs.dlq.v1` with 3. The demo
 handler logs job identity and performs no external side effects.
 
 ```sh
@@ -288,6 +288,24 @@ docker compose --profile tools run --rm sample-producer
 docker compose logs -f main-worker retry-worker
 docker compose up --scale retry-worker=2 -d
 ```
+
+For the 1,200-record, four-partition demo:
+
+```sh
+docker compose up --build -d
+docker compose --profile tools run --rm sample-producer --load-1200
+docker compose logs -f main-worker
+docker compose exec kafka /opt/kafka/bin/kafka-consumer-groups.sh \
+  --bootstrap-server localhost:9092 --describe --group job-main-v1
+```
+
+The load sends exactly 300 records to P0, P1, P2, and P3. Each handler log
+includes an ISO timestamp and the `loadSequence`/`loadTotal` fields. Success
+requires 1,200 handled lines, no retries/DLQ entries for normal records, and
+`LAG=0` for P0–P3 in the consumer-group describe output. Kafka retains the
+four committed next offsets independently; the describe result proves lag zero
+for the current group, while the handler lines prove each load record stopped
+successfully.
 
 `WORKER_ROLE` is `main` or `retry`; `KAFKA_BOOTSTRAP_SERVERS`,
 `WORKER_CONCURRENCY`, `KAFKA_TOPIC_PARTITIONS`, and
