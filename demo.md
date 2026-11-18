@@ -75,6 +75,15 @@ partition count.
 docker compose --profile tools run --rm sample-producer --load-1200
 ```
 
+To change the in-flight handler hold:
+
+```sh
+DEMO_HANDLER_DELAY_MILLIS=250 \
+  docker compose --profile tools run --rm sample-producer --load-1200
+```
+
+The delay is encoded in each demo record and defaults to 100 ms.
+
 Expected producer output includes:
 
 ```text
