@@ -8,7 +8,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 
 class SampleProducerMainTest {
     @Test
-    void loadKeysRouteExactly300RecordsToEachOfFourPartitions() {
+    void loadKeysRouteExactly100RecordsToEachOfTwelvePartitions() {
         int[] counts = new int[SampleProducerMain.DEMO_PARTITION_COUNT];
         for (int partition = 0; partition < counts.length; partition++) {
             for (int record = 0; record < SampleProducerMain.DEMO_RECORDS_PER_PARTITION; record++) {
@@ -22,10 +22,9 @@ class SampleProducerMainTest {
             }
         }
 
-        assertEquals(300, counts[0]);
-        assertEquals(300, counts[1]);
-        assertEquals(300, counts[2]);
-        assertEquals(300, counts[3]);
+        for (int count : counts) {
+            assertEquals(100, count);
+        }
         assertEquals(SampleProducerMain.DEMO_LOAD_COUNT,
                 java.util.Arrays.stream(counts).sum());
     }

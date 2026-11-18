@@ -35,7 +35,7 @@ services:
       KAFKA_BOOTSTRAP_SERVERS: "kafka:9092"
       WORKER_ROLE: "main"
       WORKER_CONCURRENCY: "${MAIN_WORKER_CONCURRENCY:-16}"
-      KAFKA_TOPIC_PARTITIONS: "${KAFKA_TOPIC_PARTITIONS:-4}"
+      KAFKA_TOPIC_PARTITIONS: "${KAFKA_TOPIC_PARTITIONS:-12}"
     depends_on:
       kafka:
         condition: service_healthy
@@ -48,7 +48,7 @@ services:
       WORKER_ROLE: "retry"
       WORKER_CONCURRENCY: "${RETRY_WORKER_CONCURRENCY:-2}"
       WORKER_RETRY_STARTS_PER_SECOND: "${RETRY_WORKER_STARTS_PER_SECOND:-1}"
-      KAFKA_TOPIC_PARTITIONS: "${KAFKA_TOPIC_PARTITIONS:-4}"
+      KAFKA_TOPIC_PARTITIONS: "${KAFKA_TOPIC_PARTITIONS:-12}"
     depends_on:
       kafka:
         condition: service_healthy
@@ -60,7 +60,7 @@ services:
     entrypoint: ["java", "-cp", "/app/app.jar:/app/dependency/*", "com.example.agenticjobscheduler.runtime.SampleProducerMain"]
     environment:
       KAFKA_BOOTSTRAP_SERVERS: "kafka:9092"
-      KAFKA_TOPIC_PARTITIONS: "${KAFKA_TOPIC_PARTITIONS:-4}"
+      KAFKA_TOPIC_PARTITIONS: "${KAFKA_TOPIC_PARTITIONS:-12}"
     depends_on:
       kafka:
         condition: service_healthy

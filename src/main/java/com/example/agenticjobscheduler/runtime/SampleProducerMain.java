@@ -15,7 +15,7 @@ import org.apache.kafka.common.serialization.ByteArraySerializer;
 import org.apache.kafka.common.utils.Utils;
 
 public final class SampleProducerMain {
-    static final int DEMO_PARTITION_COUNT = 4;
+    static final int DEMO_PARTITION_COUNT = 12;
     static final int DEMO_LOAD_COUNT = 1_200;
     static final int DEMO_RECORDS_PER_PARTITION = DEMO_LOAD_COUNT / DEMO_PARTITION_COUNT;
 
@@ -27,12 +27,12 @@ public final class SampleProducerMain {
                 && !args[0].equals("--load-1200"))) {
             throw new IllegalArgumentException("Usage: sample-producer [--fail | --load-1200]");
         }
-        boolean fail = args.length == 1;
+        boolean fail = args.length == 1 && args[0].equals("--fail");
         boolean load1200 = args.length == 1 && args[0].equals("--load-1200");
         String bootstrap = System.getenv().getOrDefault("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092");
         int partitions = Integer.parseInt(System.getenv().getOrDefault("KAFKA_TOPIC_PARTITIONS", "12"));
         if (load1200 && partitions != DEMO_PARTITION_COUNT) {
-            throw new IllegalArgumentException("--load-1200 requires KAFKA_TOPIC_PARTITIONS=4");
+            throw new IllegalArgumentException("--load-1200 requires KAFKA_TOPIC_PARTITIONS=12");
         }
         TopicProvisioner.ensureTopics(bootstrap, partitions);
 
@@ -102,7 +102,8 @@ public final class SampleProducerMain {
         var payload = JsonNodeFactory.instance.objectNode()
                 .put("message", "hello from the sample producer")
                 .put("loadSequence", sequence)
-                .put("loadTotal", total);
+                .put("loadTotal", total)
+                .put("loadMode", fail ? "failure" : "success");
         if (fail) {
             payload.put("demoFail", true);
         }

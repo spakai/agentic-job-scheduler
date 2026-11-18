@@ -19,6 +19,7 @@ public final class DemoJobHandler implements JobHandler {
                 + " executionId=" + execution.job().executionId()
                 + " loadSequence=" + execution.job().payload().path("loadSequence").asText("-")
                 + " loadTotal=" + execution.job().payload().path("loadTotal").asText("-")
+                + " loadMode=" + execution.job().payload().path("loadMode").asText("-")
                 + " attempt=" + execution.attempt()
                 + " remainingAttempts=" + execution.job().remainingAttempts()
                 + " topic=" + execution.source().topic()

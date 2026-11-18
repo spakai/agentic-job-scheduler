@@ -1,0 +1,19 @@
+2026-11-18 live twelve-partition 1,200-record success load
+Producer: 1,200 accepted; 100 per P0-P11
+Main handler success lines: 1200
+Unique load sequences: 1200
+Handler counts by partition:
+    100 0
+    100 1
+    100 2
+    100 3
+    100 4
+    100 5
+    100 6
+    100 7
+    100 8
+    100 9
+    100 10
+    100 11
+Consumer group lag summary:
+rows=13 nonzeroPartitionLag=0
