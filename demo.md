@@ -53,6 +53,20 @@ external-effect fencing. It also does not test retry/DLQ behavior.
 | Concurrency evidence | `peakActive` and final `Load concurrency summary` |
 | Retry worker | Running, but no failures should be produced |
 
+`WORKER_CONCURRENCY` is the maximum number of handler invocations that may be
+active concurrently; it is not the number of execution verticles. The main
+worker defaults to 16 handler permits. It deploys
+`min(WORKER_CONCURRENCY, 4)` execution verticles, so the default main worker
+uses four execution verticles and can have up to 16 asynchronous handler
+invocations distributed across those verticles. Changing
+`WORKER_CONCURRENCY` changes handler capacity; it changes the execution-verticle
+count only up to the pool's cap of four.
+
+The execution verticles are event-loop contexts, not dedicated worker threads.
+An execution verticle may host several asynchronous handler invocations at the
+same time. The graph's `peakActive=16` is a measured handler-invocation peak,
+not a claim that 16 verticles or 16 worker threads were present.
+
 ## C. How to run
 
 ### 1. Start or rebuild the Compose demo
@@ -92,6 +106,26 @@ partitionCounts={0=100, 1=100, 2=100, 3=100, 4=100, 5=100, 6=100, 7=100, 8=100, 
 ```
 
 Each publish is acknowledged by Kafka before the producer reports progress.
+
+### Generate the graph automatically after completion
+
+Run the complete demo and graph workflow:
+
+```sh
+./scripts/run-demo-1200.sh
+```
+
+The script uses a unique `DEMO_RUN_ID`, publishes 1,200 success records,
+waits for 1,200 matching handler lines and zero main-group lag, and writes:
+
+```text
+docs/diagrams/demo1200-concurrency.svg
+docs/tasks/evidence/DEMO1200-concurrency-success-handler-log.txt
+docs/tasks/evidence/DEMO1200-concurrency-summary.txt
+```
+
+It does not continue when processing never reaches the success criteria. Set
+`DEMO_HANDLER_DELAY_MILLIS` to change the artificial handler hold.
 
 ### 3. Capture timestamped main-worker logs
 
@@ -173,3 +207,4 @@ The validated live run from 2026-11-18 recorded:
 - [Timestamped handler log](docs/tasks/evidence/DEMO1200-concurrency-success-handler-log.txt)
 - [Per-partition handler counts](docs/tasks/evidence/DEMO1200-concurrency-handler-partition-counts.txt)
 - [Kafka consumer-group offsets](docs/tasks/evidence/DEMO1200-concurrency-group-offsets.txt)
+- [Concurrency and partition graph](docs/diagrams/demo1200-concurrency.svg)

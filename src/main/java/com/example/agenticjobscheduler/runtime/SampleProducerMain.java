@@ -102,11 +102,14 @@ public final class SampleProducerMain {
         long demoDelayMillis = fail ? 0
                 : Long.parseLong(System.getenv().getOrDefault(
                         "DEMO_HANDLER_DELAY_MILLIS", "100"));
+        String demoRunId = System.getenv().getOrDefault(
+                "DEMO_RUN_ID", UUID.randomUUID().toString());
         var payload = JsonNodeFactory.instance.objectNode()
                 .put("message", "hello from the sample producer")
                 .put("loadSequence", sequence)
                 .put("loadTotal", total)
                 .put("loadMode", fail ? "failure" : "success")
+                .put("demoRunId", demoRunId)
                 .put("demoDelayMillis", demoDelayMillis);
         if (fail) {
             payload.put("demoFail", true);

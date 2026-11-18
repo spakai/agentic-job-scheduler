@@ -33,6 +33,7 @@ public final class DemoJobHandler implements JobHandler {
                 + " loadSequence=" + execution.job().payload().path("loadSequence").asText("-")
                 + " loadTotal=" + execution.job().payload().path("loadTotal").asText("-")
                 + " loadMode=" + execution.job().payload().path("loadMode").asText("-")
+                + " demoRunId=" + execution.job().payload().path("demoRunId").asText("-")
                 + " demoDelayMillis=" + delayMillis
                 + " activeAtStart=" + active
                 + " peakActive=" + PEAK_ACTIVE.get()

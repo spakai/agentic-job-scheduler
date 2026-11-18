@@ -42,6 +42,11 @@ success load was rebuilt and rerun.
 lines and 1,200 unique sequences were observed; Kafka group lag was zero on
 P0 through P11. The 100 ms handler hold measured `peakActive=16`.
 
+2026-11-18: Added `scripts/run-demo-1200.sh` and
+`scripts/generate-demo-concurrency-graph.py`. The runner assigns a unique
+`demoRunId`, waits for 1,200 matching handler lines and lag zero, then writes
+the SVG and evidence summary automatically.
+
 ## Evaluation
 
 | Check | Commit | Command or workflow | Result | Evidence |
