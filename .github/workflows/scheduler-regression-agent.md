@@ -23,6 +23,19 @@ steps:
     with:
       distribution: temurin
       java-version: '21'
+  - name: Prime Maven repository outside agent sandbox
+    run: |
+      mkdir -p /tmp/gh-aw/agent/m2
+      mvn -B -ntp -q -DskipTests \
+        -Dmaven.repo.local=/tmp/gh-aw/agent/m2 test
+tools:
+  bash: ['git', 'mvn', 'cat', 'ls', 'find', 'grep', 'sed', 'head', 'tail']
+  github:
+    toolsets: [pull_requests]
+    allowed-repos: ['spakai/agentic-job-scheduler']
+    min-integrity: none
+    allowed:
+      - pull_request_read
 safe-outputs:
   report-failure-as-issue: false
   create-pull-request:
@@ -44,6 +57,8 @@ already promises in Spec 002 (B05, B06-B08, B11, B15, or B16). If the test
 requires production code from the incoming PR, skip it.
 
 Follow existing test conventions. Run the focused Maven test using Java 21.
+Use `-Dmaven.repo.local=/tmp/gh-aw/agent/m2` so the test uses the repository
+primed on the trusted runner before the sandbox starts.
 Open a draft PR only when the test actually runs and passes; a skipped test,
 missing dependency, or unavailable environment is not a pass. If there is no
 suitable gap or the test cannot pass, finish without a patch.
