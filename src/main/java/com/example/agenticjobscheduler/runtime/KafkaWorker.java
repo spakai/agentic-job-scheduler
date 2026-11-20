@@ -467,11 +467,7 @@ public final class KafkaWorker {
         FailureClassifier.FailureType failureType =
                 FailureClassifier.classify(failedJob.remainingAttempts());
         boolean retryable = failureType == FailureClassifier.FailureType.RETRYABLE;
-        String errorCode = failure instanceof HandlerTimeoutException ? "HANDLER_TIMEOUT"
-                : "HANDLER_FAILURE";
-        if (failureType == FailureClassifier.FailureType.EXHAUSTED) {
-            errorCode = "ATTEMPTS_EXHAUSTED";
-        }
+        String errorCode = handoffErrorCode(failure, failureType);
         String topic = retryable ? TopicProvisioner.RETRY_TOPIC : TopicProvisioner.DLQ_TOPIC;
         byte[] value = retryable
                 ? JobRecordEncoder.retry(failedJob, execution.attempt() + 1,
@@ -488,6 +484,16 @@ public final class KafkaWorker {
                     enqueueCommit(owner);
                 })
                 .onFailure(failureCause -> failWorker("Retry/DLQ publication failed", failureCause));
+    }
+
+    private static String handoffErrorCode(
+            Throwable failure, FailureClassifier.FailureType failureType) {
+        if (failureType == FailureClassifier.FailureType.EXHAUSTED) {
+            return "ATTEMPTS_EXHAUSTED";
+        }
+        return failure instanceof HandlerTimeoutException
+                ? "HANDLER_TIMEOUT"
+                : "HANDLER_FAILURE";
     }
 
     private Future<Void> sendUntilAcknowledged(KafkaProducerRecord<byte[], byte[]> record) {
