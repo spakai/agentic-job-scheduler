@@ -26,7 +26,7 @@ steps:
   - name: Prime Maven repository outside agent sandbox
     run: |
       mkdir -p /tmp/gh-aw/agent/m2
-      mvn -B -ntp -q -DskipTests \
+      mvn -B -ntp -q \
         -Dmaven.repo.local=/tmp/gh-aw/agent/m2 test
 tools:
   bash: ['git', 'mvn', 'cat', 'ls', 'find', 'grep', 'sed', 'head', 'tail']
