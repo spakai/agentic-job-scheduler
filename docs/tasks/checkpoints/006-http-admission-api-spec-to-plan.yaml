@@ -1,0 +1,184 @@
+# Spec-to-Plan Traceability Checkpoint
+metadata:
+  generated: "2026-11-23"
+  source_spec: "specs/006-http-admission-api.md"
+  target_plan: "docs/tasks/API01-http-admission-api-plan.md"
+
+summary:
+  total_requirements: 16
+  covered_requirements: 16
+  missing_requirements: 0
+  coverage_percentage: 100.0
+
+requirements:
+  - req_id: "API01"
+    req_description: "Broker-acknowledged valid canonical submission"
+    plan_mapping:
+      phase: "Phase-2-4"
+      items:
+        - item_id: "2.3"
+          description: "Canonical envelope mapping and final wire validation"
+        - item_id: "3.1"
+          description: "Asynchronous Kafka publication boundary"
+        - item_id: "4.1"
+          description: "HTTP request/response contract"
+  - req_id: "API02"
+    req_description: "Generate and return a paired identity"
+    plan_mapping:
+      phase: "Phase-2-4"
+      items:
+        - item_id: "2.3"
+          description: "Generate paired identities when omitted"
+        - item_id: "4.1"
+          description: "Return normalized identities"
+  - req_id: "API03"
+    req_description: "Reject a partially supplied identity pair"
+    plan_mapping:
+      phase: "Phase-2-4"
+      items:
+        - item_id: "2.2"
+          description: "Decode and validate paired identity fields"
+        - item_id: "4.1"
+          description: "Map validation to a 4xx response"
+  - req_id: "API04"
+    req_description: "Stable-identity resubmission may duplicate physically"
+    plan_mapping:
+      phase: "Phase-3-4"
+      items:
+        - item_id: "3.2"
+          description: "Preserve duplicate-tolerant ambiguous-send semantics"
+        - item_id: "4.1"
+          description: "Do not claim durable deduplication"
+  - req_id: "API05"
+    req_description: "Omitted identities create a new pair per request"
+    plan_mapping:
+      phase: "Phase-2-4"
+      items:
+        - item_id: "2.3"
+          description: "Generate fresh UUID pairs"
+        - item_id: "4.1"
+          description: "Exercise repeated omitted-ID requests"
+  - req_id: "API06"
+    req_description: "Reject malformed, unknown, and wrong-type input"
+    plan_mapping:
+      phase: "Phase-2-4"
+      items:
+        - item_id: "2.2"
+          description: "Strict HTTP request decoding"
+        - item_id: "4.1"
+          description: "Deterministic validation error mapping"
+  - req_id: "API07"
+    req_description: "Enforce raw-body and encoded-envelope limits"
+    plan_mapping:
+      phase: "Phase-2-4"
+      items:
+        - item_id: "2.2"
+          description: "Bound raw request bytes"
+        - item_id: "2.3"
+          description: "Bound canonical Kafka envelope"
+        - item_id: "4.1"
+          description: "Apply HTTP 413 behavior"
+  - req_id: "API08"
+    req_description: "Correct media-type and malformed-body errors"
+    plan_mapping:
+      phase: "Phase-4"
+      items:
+        - item_id: "4.1"
+          description: "Route-level media and error mapping"
+  - req_id: "API09"
+    req_description: "Prompt bounded overload rejection"
+    plan_mapping:
+      phase: "Phase-3-4"
+      items:
+        - item_id: "3.3"
+          description: "Bound in-flight publication capacity"
+        - item_id: "4.1"
+          description: "Return 429 without unbounded queueing"
+  - req_id: "API10"
+    req_description: "Map broker failure and ambiguous timeout"
+    plan_mapping:
+      phase: "Phase-3-4"
+      items:
+        - item_id: "3.2"
+          description: "Separate accepted, failed, and ambiguous outcomes"
+        - item_id: "4.1"
+          description: "Return sanitized Kafka-unavailable response"
+  - req_id: "API11"
+    req_description: "No application retry after ambiguous send"
+    plan_mapping:
+      phase: "Phase-3"
+      items:
+        - item_id: "3.1"
+          description: "Use Kafka client's bounded idempotent retry"
+        - item_id: "3.2"
+          description: "Forbid a second HTTP-layer append"
+  - req_id: "API12"
+    req_description: "Bounded shutdown and producer close"
+    plan_mapping:
+      phase: "Phase-4"
+      items:
+        - item_id: "4.2"
+          description: "Stop intake and drain in-flight work"
+  - req_id: "API13"
+    req_description: "Read-only exact Kafka readiness"
+    plan_mapping:
+      phase: "Phase-5"
+      items:
+        - item_id: "5.1"
+          description: "Describe existing topics without mutation"
+  - req_id: "API14"
+    req_description: "Preserve existing worker invariants"
+    plan_mapping:
+      phase: "Phase-2-6"
+      items:
+        - item_id: "2.3"
+          description: "Produce only canonical worker input"
+        - item_id: "6.2"
+          description: "Validate the HTTP-to-worker boundary"
+  - req_id: "API15"
+    req_description: "Sanitized logs, responses, and metrics"
+    plan_mapping:
+      phase: "Phase-4-5"
+      items:
+        - item_id: "4.1"
+          description: "Return safe structured errors"
+        - item_id: "5.3"
+          description: "Bound labels and suppress sensitive payload data"
+  - req_id: "API16"
+    req_description: "Compose HTTP-to-worker smoke path without state store"
+    plan_mapping:
+      phase: "Phase-6"
+      items:
+        - item_id: "6.1"
+          description: "Add independent HTTP Compose role"
+        - item_id: "6.2"
+          description: "Run end-to-end admission evidence"
+
+missing_requirements: []
+orphan_plan_items:
+  - phase: "Phase-1"
+    item_id: "1.1"
+    description: "Branch and acceptance baseline"
+    concern: "Execution hygiene applies to all acceptance requirements"
+  - phase: "Phase-1"
+    item_id: "1.2"
+    description: "Confirm the clean build"
+    concern: "Cross-cutting verification applies to all acceptance requirements"
+  - phase: "Phase-4"
+    item_id: "4.3"
+    description: "Launchable independent role"
+    concern: "Architectural enabler for all deployment acceptance paths"
+  - phase: "Phase-5"
+    item_id: "5.2"
+    description: "Health endpoints"
+    concern: "Supports API13 readiness but is not separately numbered in Spec 006"
+  - phase: "Phase-6"
+    item_id: "6.3"
+    description: "Operational documentation and final verification"
+    concern: "Cross-cutting completion work"
+
+validation:
+  passed: true
+  errors: []
+  warnings:
+    - "Five cross-cutting plan items intentionally have no single acceptance ID."

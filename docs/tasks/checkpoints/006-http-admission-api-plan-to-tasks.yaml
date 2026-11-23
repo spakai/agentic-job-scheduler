@@ -1,0 +1,105 @@
+# Plan-to-Tasks Traceability Checkpoint
+metadata:
+  generated: "2026-11-23"
+  source_plan: "docs/tasks/API01-http-admission-api-plan.md"
+  target_tasks: "docs/tasks/API01-http-admission-api-plan.md"
+
+summary:
+  total_plan_items: 17
+  covered_plan_items: 17
+  missing_plan_items: 0
+  coverage_percentage: 100.0
+  total_tasks_generated: 47
+  orphan_tasks: 0
+
+phases:
+  - phase_id: "Phase-1"
+    phase_name: "Baseline"
+    items:
+      - item_id: "1.1"
+        tasks: ["T001"]
+      - item_id: "1.2"
+        tasks: ["T002", "T003"]
+  - phase_id: "Phase-2"
+    phase_name: "Strict request and envelope boundary"
+    items:
+      - item_id: "2.1"
+        tasks: ["T004", "T005"]
+      - item_id: "2.2"
+        tasks: ["T006", "T007", "T009"]
+      - item_id: "2.3"
+        tasks: ["T008", "T009", "T010", "T011"]
+  - phase_id: "Phase-3"
+    phase_name: "Bounded Kafka publication"
+    items:
+      - item_id: "3.1"
+        tasks: ["T012", "T013", "T018"]
+      - item_id: "3.2"
+        tasks: ["T014", "T017", "T018"]
+      - item_id: "3.3"
+        tasks: ["T015", "T016"]
+  - phase_id: "Phase-4"
+    phase_name: "HTTP contract and role"
+    items:
+      - item_id: "4.1"
+        tasks: ["T019", "T020", "T021", "T024"]
+      - item_id: "4.2"
+        tasks: ["T022", "T025"]
+      - item_id: "4.3"
+        tasks: ["T023"]
+  - phase_id: "Phase-5"
+    phase_name: "Readiness and observation"
+    items:
+      - item_id: "5.1"
+        tasks: ["T026", "T027", "T033"]
+      - item_id: "5.2"
+        tasks: ["T028"]
+      - item_id: "5.3"
+        tasks: ["T029", "T030", "T031", "T032"]
+  - phase_id: "Phase-6"
+    phase_name: "Compose, integration, and documentation"
+    items:
+      - item_id: "6.1"
+        tasks: ["T034", "T035"]
+      - item_id: "6.2"
+        tasks: ["T036", "T037", "T040", "T041"]
+      - item_id: "6.3"
+        tasks: ["T038", "T039", "T040", "T042", "T043", "T044", "T045", "T046", "T047"]
+
+missing_plan_items: []
+orphan_tasks: []
+
+upstream_trace:
+  - plan_item: "2.3"
+    source_requirements: ["API01", "API02", "API05", "API07", "API14"]
+    tasks: ["T008", "T009", "T010", "T011"]
+  - plan_item: "3.2"
+    source_requirements: ["API04", "API10", "API11"]
+    tasks: ["T014", "T017", "T018"]
+  - plan_item: "3.3"
+    source_requirements: ["API09"]
+    tasks: ["T015", "T016"]
+  - plan_item: "4.1"
+    source_requirements: ["API01", "API02", "API03", "API04", "API05", "API06", "API07", "API08", "API09", "API10", "API15"]
+    tasks: ["T019", "T020", "T021", "T024"]
+  - plan_item: "4.2"
+    source_requirements: ["API12"]
+    tasks: ["T022", "T025"]
+  - plan_item: "5.1"
+    source_requirements: ["API13"]
+    tasks: ["T026", "T027", "T033"]
+  - plan_item: "5.3"
+    source_requirements: ["API15"]
+    tasks: ["T029", "T030", "T031", "T032"]
+  - plan_item: "6.1"
+    source_requirements: ["API16"]
+    tasks: ["T034", "T035"]
+  - plan_item: "6.2"
+    source_requirements: ["API14", "API16"]
+    tasks: ["T036", "T037", "T040", "T041"]
+
+validation:
+  passed: true
+  errors: []
+  warnings:
+    - "Cross-cutting baseline, launch, health, and documentation items support multiple numbered acceptance criteria."
