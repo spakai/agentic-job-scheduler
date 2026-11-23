@@ -101,6 +101,25 @@ class OffsetCommitTrackerTest {
     }
 
     @Test
+    void unacknowledgedHandoffHeadSurvivesCommitFailureAndSuccessOnOtherPartitions() {
+        var tracker = tracker(4);
+        var head = deliver(tracker, MAIN, 10);
+        tracker.complete(deliver(tracker, MAIN, 11), HANDLER_SUCCESS);
+        tracker.complete(deliver(tracker, RETRY, 5), HANDLER_SUCCESS);
+        var failed = tracker.beginCommit().orElseThrow();
+        assertEquals(Map.of(RETRY, 6L), failed.offsets());
+        tracker.commitFailed(failed);
+        var retried = tracker.beginCommit().orElseThrow();
+        assertEquals(Map.of(RETRY, 6L), retried.offsets());
+        tracker.commitSucceeded(retried);
+        // Retry/DLQ publication still has no acknowledgment, so MAIN keeps both records.
+        assertEquals(2, tracker.retainedRecords());
+        assertTrue(tracker.beginCommit().isEmpty());
+        tracker.complete(head, DLQ_ACKNOWLEDGED);
+        assertEquals(Map.of(MAIN, 12L), tracker.beginCommit().orElseThrow().offsets());
+    }
+
+    @Test
     void failedCommitCanCoalesceNewSafeProgress() {
         var tracker = tracker(2);
         tracker.complete(deliver(tracker, MAIN, 10), HANDLER_SUCCESS);
