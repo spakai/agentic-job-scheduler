@@ -47,6 +47,38 @@ Status: planned
 - The project has Vert.x core and Kafka support but no Vert.x Web or metrics
   dependency.
 
+### HTTP verticle and thread boundary
+
+The selected topology is one HTTP admission process/JVM per API pod. `HttpApiMain`
+creates a dedicated Vert.x instance and deploys one `HttpAdmissionVerticle`.
+That verticle:
+
+1. binds the HTTP server and installs bounded request-body and route handling;
+2. owns the route/admission counters and one asynchronous Kafka producer;
+3. receives request callbacks and producer settlement on its Vert.x context;
+4. performs only bounded validation and JSON mapping;
+5. publishes through a future without waiting or blocking;
+6. releases the admission permit and completes the response after Kafka
+   acknowledgment or a bounded deadline; and
+7. stops intake before the producer and HTTP server are closed.
+
+One verticle is a logical ownership boundary, not a promise of one dedicated
+operating-system thread. Vert.x schedules it on an event-loop thread that may
+also service other nonblocking work in the same API JVM. Requests remain
+concurrent through asynchronous futures; they do not require one thread per
+request.
+
+The HTTP process does not deploy `ConsumerVerticle`, `WorkerRuntime`,
+`KafkaWorker`, `ExecutionVerticlePool`, a job handler, or a processing window.
+It cannot reuse or borrow the main/retry execution verticles, handler permits,
+handler threads, queues, consumer assignments, or offset state. HTTP, main, and
+retry roles are separate processes/JVMs and scale independently.
+
+Co-locating HTTP and worker roles in one future process is not selected. It
+would require another architecture decision for shared event-loop pressure,
+capacity accounting, failure domains, producer/consumer lifecycle, and shutdown
+ordering, plus new evidence.
+
 ### Constitution and architecture gate
 
 No `constitution.md`, knowledge graph, project topology, or upstream feature
@@ -188,30 +220,36 @@ Tasks:
 
 ### Step 4: Expose the HTTP contract and independent role
 
-**Plan 4.1 — Routes and error mapping.** Add `POST /v1/jobs`, deterministic
-status/error mapping, body/media limits, and JSON responses using a thin route
-layer.
+**Plan 4.1 — HTTP verticle, routes, and error mapping.** Add one standard
+`HttpAdmissionVerticle` per API process with `POST /v1/jobs`, deterministic
+status/error mapping, body/media limits, and JSON responses. Broker I/O remains
+future-based; do not use a blocking worker executor or the job execution pool.
 
-**Plan 4.2 — API lifecycle.** Start and close the HTTP server and producer with a
-bounded shutdown that stops intake before draining in-flight work.
+**Plan 4.2 — API lifecycle.** Deploy and close the HTTP verticle, server, and
+producer with a bounded shutdown that stops intake before draining in-flight
+work.
 
 **Plan 4.3 — Launchable role.** Add `HttpApiMain` without changing the worker
 entry point or worker role parser.
 
 Tasks:
 
-- [ ] T019 [Plan:4.1] Add Vert.x Web at the same Vert.x version in `pom.xml`.
+- [ ] T019 [Plan:4.1] Use Vert.x Core's `HttpServer` directly to avoid an
+  unnecessary routing dependency while retaining nonblocking event-loop
+  behavior; update `pom.xml` only if implementation evidence requires it.
 - [ ] T020 [Plan:4.1] Add `src/main/java/com/example/agenticjobscheduler/admission/AdmissionException.java`
   and `AdmissionError.java` with stable HTTP/code/message mappings for
   malformed input, unsupported content, overload, Kafka unavailable, and
   unexpected internal failures.
 - [ ] T021 [Plan:4.1] Add `src/main/java/com/example/agenticjobscheduler/admission/HttpJobApi.java`
-  for `POST /v1/jobs`; enforce effective media type and body limits before
+  and `HttpAdmissionVerticle.java` for the single HTTP owner verticle and
+  `POST /v1/jobs`; enforce effective media type and body limits before
   publication, reserve admission capacity, decode/map, await the bounded
-  publication result, and always release the permit.
+  publication result asynchronously, and always release the permit.
 - [ ] T022 [Plan:4.2] Add `src/main/java/com/example/agenticjobscheduler/admission/HttpApiRuntime.java`
-  to own HTTP server, publisher, health/readiness handlers, admission stop,
-  bounded drain, and resource closure.
+  to own verticle deployment/undeployment, HTTP server, publisher,
+  health/readiness handlers, admission stop, bounded drain, and resource
+  closure. Verify that it never deploys worker consumer or execution verticles.
 - [ ] T023 [Plan:4.3] Add `src/main/java/com/example/agenticjobscheduler/admission/HttpApiMain.java`
   with an independently selectable main class, startup failure cleanup, and
   shutdown hook.
@@ -220,7 +258,8 @@ Tasks:
   `429`, `503`, and `202` contract (API03, API05-API10).
 - [ ] T025 [P] [Plan:4.2] Add `src/test/java/com/example/agenticjobscheduler/admission/HttpApiRuntimeLifecycleTest.java`
   for startup cleanup, stop-intake ordering, drain completion, bounded stalled
-  futures, and double-close idempotence (API12).
+  futures, double-close idempotence, and a negative assertion that no worker
+  verticle, consumer, or handler is deployed (API12).
 
 ### Step 5: Add readiness and bounded observation
 
@@ -292,7 +331,13 @@ Tasks:
   `503`, health endpoints, and Compose command.
 - [ ] T039 [P] [Plan:6.3] Update `arch.md` to remove the implemented-increment
   claim that no HTTP API exists only after the role and tests land; add the
-  admission boundary and explicitly preserve non-guarantees.
+  admission boundary and explicitly preserve non-guarantees. Update arc42
+  sections 1-7 with the HTTP context and an HTTP runtime sequence, section 9
+  with ADR 11 (“separate HTTP admission process; no worker verticle reuse”),
+  and sections 10-11 with acknowledgment/ambiguity quality goals and the
+  co-location/deduplication risks. State that a verticle is a logical ownership
+  context on an event loop, not one dedicated thread per request or a reusable
+  worker execution slot.
 - [ ] T040 [Plan:6.2,6.3] Run `mvn -B -ntp test`, `mvn -B -ntp package`, and, with
   Docker available, focused/full `mvn -B -ntp verify`; record each separately.
 - [ ] T041 [Plan:6.2] Run the Compose HTTP smoke check, capture exact commands,
@@ -349,6 +394,7 @@ src/main/java/com/example/agenticjobscheduler/
     HttpApiMain.java
     HttpApiReadiness.java
     HttpApiRuntime.java
+    HttpAdmissionVerticle.java
     HttpJobApi.java
     JobPublisher.java
     KafkaJobPublisher.java

@@ -55,6 +55,31 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
+  http-api:
+    build: .
+    entrypoint:
+      - "java"
+      - "-cp"
+      - "/app/app.jar:/app/dependency/*"
+      - "com.example.agenticjobscheduler.admission.HttpApiMain"
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: "kafka:9092"
+      KAFKA_TOPIC_PARTITIONS: "${KAFKA_TOPIC_PARTITIONS:-12}"
+      REGISTERED_JOB_TYPES: "${REGISTERED_JOB_TYPES:-demo.echo}"
+      HTTP_PORT: "8080"
+      HTTP_MAX_BODY_BYTES: "262144"
+      HTTP_MAX_IN_FLIGHT: "1000"
+      HTTP_ACK_DEADLINE_MILLIS: "10000"
+      KAFKA_DELIVERY_TIMEOUT_MILLIS: "9000"
+      HTTP_GRACEFUL_SHUTDOWN_MILLIS: "30000"
+    ports:
+      - "127.0.0.1:8080:8080"
+    depends_on:
+      kafka:
+        condition: service_healthy
+    stop_grace_period: 35s
+    restart: unless-stopped
+
   sample-producer:
     build: .
     profiles: ["tools"]

@@ -1,0 +1,114 @@
+batch_id: "API01-core"
+completed_tasks:
+  - "T004-T016"
+  - "T018-T030"
+  - "T033-T035"
+  - "T038-T039"
+blocked_tasks:
+  - task_id: "T036-T037"
+    reason: "Compose smoke and direct HTTP-to-worker integration evidence are not yet implemented."
+    required_task_ids: []
+files_changed:
+  T004-T016:
+    - file: "src/main/java/com/example/agenticjobscheduler/admission/"
+      change_type: "created"
+      description: "Configuration, strict request decoder, canonical envelope mapping, publisher, and limiter"
+  T018-T030:
+    - file: "src/test/java/com/example/agenticjobscheduler/admission/"
+      change_type: "created"
+      description: "Contract, lifecycle, overload, Kafka publication, and readiness tests"
+  T033-T035:
+    - file: "compose.yaml"
+      change_type: "modified"
+      description: "Producer-only HTTP service with bounded lifecycle settings"
+  T038-T039:
+    - file: "arch.md"
+      change_type: "modified"
+      description: "arc42 HTTP context, runtime, deployment, quality, risk, and ADR 11"
+    - file: "README.md"
+      change_type: "modified"
+      description: "HTTP admission operation and retry semantics"
+upstream_artifacts_consumed:
+  API01-core:
+    - artifact: "specs/006-http-admission-api.md"
+      used_for: "API contract, limits, acknowledgments, and non-guarantees"
+    - artifact: "docs/tasks/API01-http-admission-api-plan.md"
+      used_for: "Phases, task boundaries, files, and acceptance traceability"
+required_endpoints:
+  - method: "POST"
+    path: "/v1/jobs"
+    source: "specs/006-http-admission-api.md"
+    status: "implemented"
+  - method: "GET"
+    path: "/health/live"
+    source: "specs/006-http-admission-api.md"
+    status: "implemented"
+  - method: "GET"
+    path: "/health/ready"
+    source: "specs/006-http-admission-api.md"
+    status: "implemented"
+  - method: "GET"
+    path: "/metrics"
+    source: "implementation plan D1"
+    status: "implemented"
+traceability:
+  - requirement: "API01-API13, API15"
+    plan_item: "2.1-5.3"
+    task: "T004-T035"
+    files:
+      - "src/main/java/com/example/agenticjobscheduler/admission/"
+      - "src/test/java/com/example/agenticjobscheduler/admission/"
+    status: "completed"
+  - requirement: "API14, API16"
+    plan_item: "6.1-6.3"
+    task: "T034-T047"
+    files:
+      - "compose.yaml"
+      - "arch.md"
+      - "README.md"
+    status: "partial"
+protocol_violation: false
+errors: []
+warnings:
+  - severity: "MEDIUM"
+    message: "Full mvn clean verify encountered a timeout in existing KafkaWorkerCooperativeIT; focused HTTP verification passed."
+  - severity: "MEDIUM"
+    message: "Compose smoke and direct HTTP-to-worker integration remain explicit follow-up tasks."
+test_results:
+  unit:
+    command: "mvn -B -ntp clean -Dit.test=HttpAdmissionKafkaIT verify"
+    passed: 155
+    failed: 0
+    skipped: 0
+    failures: []
+  integration:
+    command: "mvn -B -ntp clean -Dit.test=HttpAdmissionKafkaIT verify"
+    passed: 2
+    failed: 0
+    skipped: 0
+    failures: []
+  full_suite:
+    command: "mvn -B -ntp clean verify"
+    passed: 24
+    failed: 2
+    skipped: 0
+    failures:
+      - "KafkaWorkerCooperativeIT#retainedPartitionsProgressWithoutReplayingAcrossRepeatedJoinsAndLeaves: existing rebalance timeout"
+      - "HttpAdmissionKafkaIT readiness assertion: fixed in subsequent focused run"
+endpoint_probes:
+  - method: "POST"
+    path: "/v1/jobs"
+    status: 202
+    result: "PASS"
+  - method: "GET"
+    path: "/health/live"
+    status: 200
+    result: "PASS"
+  - method: "GET"
+    path: "/health/ready"
+    status: 200
+    result: "PASS"
+  - method: "GET"
+    path: "/metrics"
+    status: 200
+    result: "PASS"

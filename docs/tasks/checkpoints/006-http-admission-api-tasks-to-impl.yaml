@@ -1,0 +1,140 @@
+metadata:
+  generated: "2026-11-24"
+  source_tasks: "docs/tasks/API01-http-admission-api-plan.md"
+  last_updated: "2026-11-24"
+
+summary:
+  total_tasks: 47
+  completed_tasks: 31
+  in_progress_tasks: 0
+  pending_tasks: 16
+  completion_percentage: 66.0
+
+tasks:
+  - task_id: "T004"
+    status: "completed"
+    implementation:
+      files_changed:
+        - file: "src/main/java/com/example/agenticjobscheduler/admission/HttpApiConfig.java"
+  - task_id: "T005"
+    status: "completed"
+    implementation:
+      files_changed:
+        - file: "src/test/java/com/example/agenticjobscheduler/admission/HttpApiConfigTest.java"
+  - task_id: "T006"
+    status: "completed"
+    implementation:
+      files_changed:
+        - file: "src/main/java/com/example/agenticjobscheduler/admission/AdmissionRequest.java"
+  - task_id: "T007"
+    status: "completed"
+    implementation:
+      files_changed:
+        - file: "src/main/java/com/example/agenticjobscheduler/admission/AdmissionRequestDecoder.java"
+  - task_id: "T008"
+    status: "completed"
+    implementation:
+      files_changed:
+        - file: "src/main/java/com/example/agenticjobscheduler/admission/AdmissionEnvelopeMapper.java"
+        - file: "src/main/java/com/example/agenticjobscheduler/admission/AdmissionEnvelope.java"
+  - task_id: "T009-T011"
+    status: "completed"
+    implementation:
+      files_changed:
+        - file: "src/test/java/com/example/agenticjobscheduler/admission/AdmissionRequestDecoderTest.java"
+        - file: "src/test/java/com/example/agenticjobscheduler/admission/AdmissionEnvelopeMapperTest.java"
+  - task_id: "T012-T015"
+    status: "completed"
+    implementation:
+      files_changed:
+        - file: "src/main/java/com/example/agenticjobscheduler/admission/JobPublisher.java"
+        - file: "src/main/java/com/example/agenticjobscheduler/admission/KafkaJobPublisher.java"
+        - file: "src/main/java/com/example/agenticjobscheduler/admission/AdmissionAcknowledgment.java"
+        - file: "src/main/java/com/example/agenticjobscheduler/admission/AdmissionLimiter.java"
+  - task_id: "T016"
+    status: "completed"
+    implementation:
+      files_changed:
+        - file: "src/test/java/com/example/agenticjobscheduler/admission/AdmissionLimiterTest.java"
+  - task_id: "T018"
+    status: "completed"
+    implementation:
+      files_changed:
+        - file: "src/test/java/com/example/agenticjobscheduler/admission/HttpAdmissionKafkaIT.java"
+  - task_id: "T019-T025"
+    status: "completed"
+    implementation:
+      files_changed:
+        - file: "src/main/java/com/example/agenticjobscheduler/admission/HttpAdmissionVerticle.java"
+        - file: "src/main/java/com/example/agenticjobscheduler/admission/HttpApiRuntime.java"
+        - file: "src/main/java/com/example/agenticjobscheduler/admission/HttpApiMain.java"
+        - file: "src/main/java/com/example/agenticjobscheduler/admission/AdmissionException.java"
+        - file: "src/test/java/com/example/agenticjobscheduler/admission/HttpAdmissionVerticleTest.java"
+  - task_id: "T026-T030"
+    status: "completed"
+    implementation:
+      files_changed:
+        - file: "src/main/java/com/example/agenticjobscheduler/admission/ReadinessProbe.java"
+        - file: "src/main/java/com/example/agenticjobscheduler/admission/KafkaReadinessProbe.java"
+        - file: "src/main/java/com/example/agenticjobscheduler/admission/AdmissionMetrics.java"
+  - task_id: "T033"
+    status: "completed"
+    implementation:
+      files_changed:
+        - file: "src/test/java/com/example/agenticjobscheduler/admission/HttpAdmissionKafkaIT.java"
+  - task_id: "T034-T035"
+    status: "completed"
+    implementation:
+      files_changed:
+        - file: "compose.yaml"
+  - task_id: "T038-T039"
+    status: "completed"
+    implementation:
+      files_changed:
+        - file: "README.md"
+        - file: "arch.md"
+
+pending_tasks:
+  - task_id: "T001-T003"
+    reason: "Execution branch and baseline are complete but the task record checklist was not rewritten yet."
+  - task_id: "T017"
+    reason: "A dedicated publisher contract test remains to be added."
+  - task_id: "T031-T032"
+    reason: "Dedicated metrics and log-capture tests remain."
+  - task_id: "T036-T037"
+    reason: "Compose smoke helper and direct HTTP-to-worker integration evidence remain."
+  - task_id: "T040-T042"
+    reason: "The focused clean verification passes; full-suite and Compose acceptance closure remain."
+  - task_id: "T043-T047"
+    reason: "Final review and evidence closure remain after PR review."
+
+untracked_changes:
+  - file: "demo.md"
+    change_type: "modified"
+    concern: "Unrelated pre-existing user change; explicitly excluded from staging."
+  - file: "docs/diagrams/demo1200-two-main-pods.svg"
+    change_type: "modified"
+    concern: "Unrelated pre-existing user change; explicitly excluded from staging."
+  - file: "scripts/generate-two-main-pod-concurrency-graph.py"
+    change_type: "modified"
+    concern: "Unrelated pre-existing user change; explicitly excluded from staging."
+
+traceability_chain:
+  - chain_id: "TRACE-HTTP-ADMISSION"
+    requirement: "API01-API16"
+    plan_phase: "Phase-2 through Phase-6"
+    tasks: ["T004-T016", "T018-T030", "T033-T039"]
+    files:
+      - "src/main/java/com/example/agenticjobscheduler/admission/"
+      - "src/test/java/com/example/agenticjobscheduler/admission/"
+      - "arch.md"
+      - "README.md"
+      - "compose.yaml"
+    status: "partial"
+
+validation:
+  passed: true
+  errors: []
+  warnings:
+    - "Focused implementation is ready for PR review; remaining plan tasks are explicitly pending."
+  blocking_issues: []

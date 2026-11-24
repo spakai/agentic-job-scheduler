@@ -211,6 +211,7 @@ payload values, stack traces, or broker configuration.
 | `400` | `MALFORMED_JSON`, `VALIDATION_ERROR` | Invalid JSON or request contract |
 | `413` | `REQUEST_TOO_LARGE` | HTTP body or resulting envelope exceeds its configured limit |
 | `415` | `UNSUPPORTED_MEDIA_TYPE` | Effective request content type is not JSON |
+| `408` | `REQUEST_TIMEOUT` | The request body did not arrive within the bounded read deadline |
 | `429` | `ADMISSION_OVERLOADED` | The API's bounded in-flight publication capacity is full |
 | `503` | `KAFKA_UNAVAILABLE` | Publication was not acknowledged within the bounded admission deadline |
 | `500` | `INTERNAL_ERROR` | An unexpected server failure occurred |

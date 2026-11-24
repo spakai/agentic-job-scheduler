@@ -43,8 +43,10 @@ phases:
     items:
       - item_id: "4.1"
         tasks: ["T019", "T020", "T021", "T024"]
+        notes: "One nonblocking HTTP admission verticle per API process; no worker verticle reuse."
       - item_id: "4.2"
         tasks: ["T022", "T025"]
+        notes: "Runtime proves worker consumer, handler, and execution verticles are not deployed."
       - item_id: "4.3"
         tasks: ["T023"]
   - phase_id: "Phase-5"
@@ -65,6 +67,7 @@ phases:
         tasks: ["T036", "T037", "T040", "T041"]
       - item_id: "6.3"
         tasks: ["T038", "T039", "T040", "T042", "T043", "T044", "T045", "T046", "T047"]
+        notes: "arc42 sections 1-7 and 9-11 include ADR 11 and the separate HTTP event-loop boundary."
 
 missing_plan_items: []
 orphan_tasks: []
