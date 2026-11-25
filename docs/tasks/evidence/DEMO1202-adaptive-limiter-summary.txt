@@ -1,0 +1,8 @@
+Adaptive limiter showcase evidence
+Initial limit: 16 (one main-worker pod)
+Warmup increase: 16 -> 17 at p95=540 ms, completed=64.
+Pressure decrease: 22 -> 11 at p95=1303 ms, completed=66.
+Recovery increase: 2 -> 3 at p95=504 ms, completed=20.
+Phases: warmup=1200 unique handlers, final lag rows=0, delay=500 ms, pressure=160 unique handlers, final lag rows=0, delay=1300 ms, recovery=1200 unique handlers, final lag rows=0, delay=500 ms
+Windows recorded: 34; handler start observations: 2560.
+This is a per-process limit demonstration, not a cluster-wide budget or global ordering test.

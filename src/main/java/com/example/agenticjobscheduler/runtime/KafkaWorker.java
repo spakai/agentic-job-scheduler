@@ -649,6 +649,9 @@ public final class KafkaWorker {
             return;
         }
         int sampleCount = completedAttempts;
+        int limitBefore = mainLimiter.currentLimit();
+        boolean backlogPresent = owners.values().stream()
+                .anyMatch(owner -> owner.dispatcher.queuedRecords(context) > 0);
         long p95Millis = 0;
         double failureRate = 0;
         if (sampleCount > 0) {
@@ -660,7 +663,7 @@ public final class KafkaWorker {
             failureRate = (double) failedAttempts / sampleCount;
         }
         int updated = mainLimiter.applyWindow(
-                owners.values().stream().anyMatch(owner -> owner.dispatcher.queuedRecords(context) > 0),
+                backlogPresent,
                 p95Millis, failureRate,
                 false, false, sampleCount);
         completedAttempts = 0;
@@ -669,6 +672,14 @@ public final class KafkaWorker {
         if (updated != mainLimiter.currentLimit()) {
             throw new IllegalStateException("Adaptive limiter returned an inconsistent limit");
         }
+        LOG.info("Adaptive limiter window role=main"
+                + " windowEpochMillis=" + System.currentTimeMillis()
+                + " completedAttempts=" + sampleCount
+                + " p95HandlerMillis=" + p95Millis
+                + " transientFailureRate=" + failureRate
+                + " backlogPresent=" + backlogPresent
+                + " limitBefore=" + limitBefore
+                + " limitAfter=" + updated);
         resizeDispatchers();
     }
 

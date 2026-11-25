@@ -69,6 +69,36 @@ class SampleProducerMainTest {
     }
 
     @Test
+    void loadCountSupportsBoundedBatchesAndRejectsInvalidCounts() {
+        assertEquals(160, SampleProducerMain.parseOptions(
+                new String[] {"--load-count", "160"}).loadCount());
+        assertEquals(SampleProducerMain.DEMO_LOAD_COUNT, SampleProducerMain.parseOptions(
+                new String[] {"--load-1200"}).loadCount());
+        assertThrows(IllegalArgumentException.class, () ->
+                SampleProducerMain.parseOptions(new String[] {"--load-count"}));
+        assertThrows(IllegalArgumentException.class, () ->
+                SampleProducerMain.parseOptions(new String[] {"--load-count", "0"}));
+        assertThrows(IllegalArgumentException.class, () ->
+                SampleProducerMain.parseOptions(new String[] {"--load-count", "1201"}));
+        assertThrows(IllegalArgumentException.class, () ->
+                SampleProducerMain.parseOptions(new String[] {"--load-count", "many"}));
+        assertThrows(IllegalArgumentException.class, () ->
+                SampleProducerMain.parseOptions(new String[] {
+                        "--load-count", "12", "--load-1200"
+                }));
+    }
+
+    @Test
+    void loadPartitionOrderContainsExactlyTheRequestedCount() {
+        assertEquals(160, SampleProducerMain.loadPartitionOrder(160).size());
+        assertEquals(SampleProducerMain.DEMO_LOAD_COUNT,
+                SampleProducerMain.loadPartitionOrder(
+                        SampleProducerMain.DEMO_LOAD_COUNT).size());
+        assertThrows(IllegalArgumentException.class, () ->
+                SampleProducerMain.loadPartitionOrder(0));
+    }
+
+    @Test
     void httpRequestUsesTheCanonicalAdmissionContract() throws Exception {
         var job = SampleProducerMain.sampleJob(false, 42, 1200);
         var body = JSON.readTree(SampleProducerMain.admissionRequestBody(job));

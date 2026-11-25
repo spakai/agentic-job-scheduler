@@ -28,6 +28,10 @@ direct-Kafka publication, timestamped handler verification, and lag/commit
 checks. [The HTTP admission demo](demo_http.md) records the same workload
 through `POST /v1/jobs`.
 
+The [adaptive limiter demo](demo_adaptive_limiter.md) runs healthy, slow, and
+recovery phases against one main-worker pod and records per-window limit,
+latency, and observed handler-concurrency evidence.
+
 ## Kafka polling and event-loop behavior
 
 <table>
