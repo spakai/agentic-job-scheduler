@@ -120,6 +120,28 @@ class OffsetCommitTrackerTest {
     }
 
     @Test
+    void freshTrackerAfterRevocationRejectsRevokedPartitionAndStaleCompletions() {
+        var beforeRevocation = tracker(2);
+        var revoked = deliver(beforeRevocation, OTHER, 50);
+        var kept = deliver(beforeRevocation, MAIN, 10);
+        beforeRevocation.complete(revoked, RETRY_ACKNOWLEDGED);
+        beforeRevocation.complete(kept, HANDLER_SUCCESS);
+
+        var afterRevocation = new OffsetCommitTracker(Set.of(MAIN), 2);
+        assertThrows(IllegalArgumentException.class, () -> deliver(afterRevocation, OTHER, 50));
+        assertThrows(IllegalArgumentException.class,
+                () -> afterRevocation.complete(revoked, RETRY_ACKNOWLEDGED));
+        assertThrows(IllegalArgumentException.class,
+                () -> afterRevocation.complete(kept, HANDLER_SUCCESS));
+        assertTrue(afterRevocation.beginCommit().isEmpty());
+        assertEquals(0, afterRevocation.retainedRecords());
+
+        var replay = deliver(afterRevocation, MAIN, 10); // Uncommitted work replays after reassignment.
+        afterRevocation.complete(replay, HANDLER_SUCCESS);
+        assertEquals(Map.of(MAIN, 11L), afterRevocation.beginCommit().orElseThrow().offsets());
+    }
+
+    @Test
     void failedCommitCanCoalesceNewSafeProgress() {
         var tracker = tracker(2);
         tracker.complete(deliver(tracker, MAIN, 10), HANDLER_SUCCESS);
