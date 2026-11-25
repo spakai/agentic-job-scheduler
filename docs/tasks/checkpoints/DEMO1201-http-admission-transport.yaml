@@ -1,0 +1,54 @@
+metadata:
+  generated: "2026-11-25"
+  source_tasks: "docs/tasks/DEMO1201-http-admission-transport.md"
+  last_updated: "2026-11-25"
+
+summary:
+  total_tasks: 4
+  completed_tasks: 4
+  in_progress_tasks: 0
+  pending_tasks: 0
+  completion_percentage: 100.0
+
+tasks:
+  - task_id: "DEMO1201-T001"
+    status: "completed"
+    implementation:
+      files_changed:
+        - file: "src/main/java/com/example/agenticjobscheduler/runtime/SampleProducerMain.java"
+        - file: "src/test/java/com/example/agenticjobscheduler/runtime/SampleProducerMainTest.java"
+  - task_id: "DEMO1201-T002"
+    status: "completed"
+    implementation:
+      files_changed:
+        - file: "scripts/run-demo-1200.sh"
+        - file: "compose.yaml"
+  - task_id: "DEMO1201-T003"
+    status: "completed"
+    implementation:
+      files_changed:
+        - file: "demo_direct-kafka.md"
+        - file: "README.md"
+  - task_id: "DEMO1201-T004"
+    status: "completed"
+    implementation:
+      files_changed:
+        - file: "docs/tasks/DEMO1201-http-admission-transport.md"
+
+traceability_chain:
+  - chain_id: "TRACE-DEMO-HTTP-TRANSPORT"
+    requirement: "Spec 002 B01/B04/B14/B15; Spec 006 API01"
+    tasks:
+      - "DEMO1201-T001"
+      - "DEMO1201-T002"
+    files:
+      - "src/main/java/com/example/agenticjobscheduler/runtime/SampleProducerMain.java"
+      - "scripts/run-demo-1200.sh"
+    status: "completed"
+
+validation:
+  passed: true
+  errors: []
+  warnings:
+    - "The direct-Kafka 1,200-record Compose mode was not rerun in this session."
+  blocking_issues: []

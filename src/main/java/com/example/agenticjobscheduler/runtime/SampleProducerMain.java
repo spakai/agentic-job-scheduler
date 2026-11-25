@@ -1,7 +1,14 @@
 package com.example.agenticjobscheduler.runtime;
 
 import com.example.agenticjobscheduler.messaging.JobEnvelope;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.JsonNodeFactory;
+import java.io.IOException;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.time.Duration;
 import java.util.Properties;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.UUID;
@@ -21,20 +28,24 @@ public final class SampleProducerMain {
     static final int DEMO_PARTITION_COUNT = 12;
     static final int DEMO_LOAD_COUNT = 1_200;
     static final int DEMO_RECORDS_PER_PARTITION = DEMO_LOAD_COUNT / DEMO_PARTITION_COUNT;
+    private static final ObjectMapper JSON = new ObjectMapper();
 
     private SampleProducerMain() { }
 
     public static void main(String[] args) throws Exception {
-        if (args.length > 1 || (args.length == 1
-                && !args[0].equals("--fail")
-                && !args[0].equals("--load-1200"))) {
-            throw new IllegalArgumentException("Usage: sample-producer [--fail | --load-1200]");
+        Options options = parseOptions(args);
+        if (options.transport() == Transport.HTTP) {
+            if (options.load1200()) {
+                publishLoadHttp(options.fail());
+            } else {
+                publishOneHttp(options.fail());
+            }
+            return;
         }
-        boolean fail = args.length == 1 && args[0].equals("--fail");
-        boolean load1200 = args.length == 1 && args[0].equals("--load-1200");
+
         String bootstrap = System.getenv().getOrDefault("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092");
         int partitions = Integer.parseInt(System.getenv().getOrDefault("KAFKA_TOPIC_PARTITIONS", "12"));
-        if (load1200 && partitions != DEMO_PARTITION_COUNT) {
+        if (options.load1200() && partitions != DEMO_PARTITION_COUNT) {
             throw new IllegalArgumentException("--load-1200 requires KAFKA_TOPIC_PARTITIONS=12");
         }
         TopicProvisioner.ensureTopics(bootstrap, partitions);
@@ -47,12 +58,53 @@ public final class SampleProducerMain {
         properties.put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, ByteArraySerializer.class.getName());
         properties.put(ProducerConfig.MAX_REQUEST_SIZE_CONFIG, "1048576");
         try (KafkaProducer<byte[], byte[]> producer = new KafkaProducer<>(properties)) {
-            if (load1200) {
-                publishLoad(producer, fail);
+            if (options.load1200()) {
+                publishLoad(producer, options.fail());
             } else {
-                publishOne(producer, fail);
+                publishOne(producer, options.fail());
             }
         }
+    }
+
+    static Options parseOptions(String[] args) {
+        boolean fail = false;
+        boolean load1200 = false;
+        Transport transport = Transport.DIRECT_KAFKA;
+        for (int index = 0; index < args.length; index++) {
+            String argument = args[index];
+            switch (argument) {
+                case "--fail" -> fail = true;
+                case "--load-1200" -> load1200 = true;
+                case "--transport" -> {
+                    if (index + 1 >= args.length) {
+                        throw new IllegalArgumentException("--transport requires a value");
+                    }
+                    transport = parseTransport(args[++index]);
+                }
+                default -> {
+                    if (argument.startsWith("--transport=")) {
+                        transport = parseTransport(argument.substring("--transport=".length()));
+                    } else {
+                        throw new IllegalArgumentException("Usage: sample-producer "
+                                + "[--fail | --load-1200] "
+                                + "[--transport direct-kafka|http]");
+                    }
+                }
+            }
+        }
+        if (fail && load1200) {
+            throw new IllegalArgumentException("--fail and --load-1200 are mutually exclusive");
+        }
+        return new Options(fail, load1200, transport);
+    }
+
+    private static Transport parseTransport(String value) {
+        return switch (value) {
+            case "direct-kafka" -> Transport.DIRECT_KAFKA;
+            case "http" -> Transport.HTTP;
+            default -> throw new IllegalArgumentException(
+                    "Unsupported transport " + value + "; expected direct-kafka or http");
+        };
     }
 
     private static void publishOne(KafkaProducer<byte[], byte[]> producer, boolean fail) throws Exception {
@@ -69,16 +121,10 @@ public final class SampleProducerMain {
         Map<Integer, Integer> acceptedByPartition = new LinkedHashMap<>();
         Map<Integer, Long> firstOffsetByPartition = new LinkedHashMap<>();
         Map<Integer, Long> lastOffsetByPartition = new LinkedHashMap<>();
-        List<Integer> sendOrder = new ArrayList<>(DEMO_LOAD_COUNT);
         for (int partition = 0; partition < DEMO_PARTITION_COUNT; partition++) {
             acceptedByPartition.put(partition, 0);
         }
-        Random random = new Random(Long.parseLong(System.getenv().getOrDefault(
-                "DEMO_RANDOM_SEED", "1200")));
-        for (int record = 0; record < DEMO_LOAD_COUNT; record++) {
-            sendOrder.add(random.nextInt(DEMO_PARTITION_COUNT));
-        }
-        for (int partition : sendOrder) {
+        for (int partition : loadPartitionOrder()) {
             UUID jobId = jobIdForPartition(partition, DEMO_PARTITION_COUNT);
             var job = sampleJob(fail,
                     sequence.incrementAndGet(),
@@ -105,6 +151,109 @@ public final class SampleProducerMain {
                     + " firstOffset=" + firstOffsetByPartition.get(partition)
                     + " lastOffset=" + lastOffsetByPartition.get(partition));
         }
+    }
+
+    private static void publishOneHttp(boolean fail) throws Exception {
+        JobEnvelope job = sampleJob(fail, 1, 1);
+        try (HttpClient client = HttpClient.newHttpClient()) {
+            submitHttp(client, job);
+        }
+        System.out.println("Accepted jobId=" + job.jobId()
+                + " transport=http status=202");
+    }
+
+    private static void publishLoadHttp(boolean fail) throws Exception {
+        AtomicInteger sequence = new AtomicInteger();
+        Map<Integer, Integer> acceptedByPartition = new LinkedHashMap<>();
+        for (int partition = 0; partition < DEMO_PARTITION_COUNT; partition++) {
+            acceptedByPartition.put(partition, 0);
+        }
+        try (HttpClient client = HttpClient.newHttpClient()) {
+            for (int partition : loadPartitionOrder()) {
+                UUID jobId = jobIdForPartition(partition, DEMO_PARTITION_COUNT);
+                JobEnvelope job = sampleJob(fail,
+                        sequence.incrementAndGet(),
+                        DEMO_LOAD_COUNT);
+                job = new JobEnvelope(job.schemaVersion(), jobId, job.executionId(),
+                        job.jobType(), job.payload(), job.remainingAttempts());
+                submitHttp(client, job);
+                acceptedByPartition.put(partition, acceptedByPartition.get(partition) + 1);
+                if (sequence.get() % 100 == 0) {
+                    System.out.println("Load progress accepted=" + sequence.get()
+                            + " total=" + DEMO_LOAD_COUNT + " transport=http");
+                }
+            }
+        }
+        System.out.println("Load complete accepted=" + sequence.get()
+                + " transport=http topic=" + TopicProvisioner.MAIN_TOPIC
+                + " partitionCounts=" + acceptedByPartition);
+    }
+
+    private static void submitHttp(HttpClient client, JobEnvelope job)
+            throws IOException, InterruptedException {
+        String baseUrl = System.getenv().getOrDefault(
+                "DEMO_HTTP_BASE_URL", "http://http-api:8080");
+        long timeoutMillis = Long.parseLong(System.getenv().getOrDefault(
+                "DEMO_HTTP_TIMEOUT_MILLIS", "15000"));
+        submitHttp(client, job, baseUrl, timeoutMillis);
+    }
+
+    static void submitHttp(HttpClient client, JobEnvelope job,
+            String baseUrl, long timeoutMillis) throws IOException, InterruptedException {
+        String normalizedBaseUrl = baseUrl.endsWith("/")
+                ? baseUrl.substring(0, baseUrl.length() - 1)
+                : baseUrl;
+        HttpRequest request = HttpRequest.newBuilder()
+                .uri(URI.create(normalizedBaseUrl + "/v1/jobs"))
+                .timeout(Duration.ofMillis(timeoutMillis))
+                .header("content-type", "application/json")
+                .POST(HttpRequest.BodyPublishers.ofString(admissionRequestBody(job)))
+                .build();
+        HttpResponse<String> response = client.send(
+                request, HttpResponse.BodyHandlers.ofString());
+        if (response.statusCode() != 202) {
+            throw new IOException("HTTP admission failed status=" + response.statusCode()
+                    + " errorCode=" + responseErrorCode(response.body()));
+        }
+        var responseBody = JSON.readTree(response.body());
+        if (!"accepted".equals(responseBody.path("status").asText())
+                || !job.jobId().toString().equals(responseBody.path("jobId").asText())
+                || !job.executionId().toString().equals(
+                        responseBody.path("executionId").asText())) {
+            throw new IOException("HTTP admission returned an inconsistent 202 response");
+        }
+    }
+
+    static String admissionRequestBody(JobEnvelope job) {
+        var request = JsonNodeFactory.instance.objectNode()
+                .put("jobId", job.jobId().toString())
+                .put("executionId", job.executionId().toString())
+                .put("jobType", job.jobType());
+        request.set("payload", job.payload());
+        request.put("remainingAttempts", job.remainingAttempts());
+        try {
+            return JSON.writeValueAsString(request);
+        } catch (IOException exception) {
+            throw new IllegalStateException("Could not encode HTTP admission request", exception);
+        }
+    }
+
+    private static String responseErrorCode(String responseBody) {
+        try {
+            return JSON.readTree(responseBody).path("error").path("code").asText("none");
+        } catch (IOException ignored) {
+            return "unparseable";
+        }
+    }
+
+    private static List<Integer> loadPartitionOrder() {
+        List<Integer> sendOrder = new ArrayList<>(DEMO_LOAD_COUNT);
+        Random random = new Random(Long.parseLong(System.getenv().getOrDefault(
+                "DEMO_RANDOM_SEED", "1200")));
+        for (int record = 0; record < DEMO_LOAD_COUNT; record++) {
+            sendOrder.add(random.nextInt(DEMO_PARTITION_COUNT));
+        }
+        return sendOrder;
     }
 
     static JobEnvelope sampleJob(boolean fail, int sequence, int total) {
@@ -142,5 +291,13 @@ public final class SampleProducerMain {
         }
         throw new IllegalStateException("Could not find a jobId for partition "
                 + expectedPartition);
+    }
+
+    enum Transport {
+        DIRECT_KAFKA,
+        HTTP
+    }
+
+    record Options(boolean fail, boolean load1200, Transport transport) {
     }
 }

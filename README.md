@@ -23,8 +23,10 @@ See the [arc42 architecture documentation](arch.md) for topic ownership,
 per-job queues, safe commits, the runtime boundary, and ADRs 1–10.
 
 For a runnable 1,200-record, 12-partition validation, see
-[the Kafka worker demo guide](demo.md). It documents the test scope, parameters,
-producer command, timestamped handler verification, and lag/commit checks.
+[the direct-Kafka worker demo guide](demo_direct-kafka.md). It documents the test scope, parameters,
+direct-Kafka publication, timestamped handler verification, and lag/commit
+checks. [The HTTP admission demo](demo_http.md) records the same workload
+through `POST /v1/jobs`.
 
 ## Kafka polling and event-loop behavior
 
@@ -456,5 +458,5 @@ and [JUnit 5.14.1](https://docs.junit.org/5.14.1/_exports/junit-user-guide-5.14.
 L03 aligns Jackson with Vert.x. Record the current dependency scan result in the
 L06 task evidence before claiming the full increment complete.
 For the 1,200-record two-main-worker randomized demo, see
-[demo.md](demo.md) for seed counts, partition distribution, retained-window
+[demo_direct-kafka.md](demo_direct-kafka.md) for seed counts, partition distribution, retained-window
 configuration, replay evidence, and per-pod graph links.

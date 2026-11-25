@@ -32,8 +32,8 @@ for line in log_file.read_text().splitlines():
     if sequence not in seen_sequences:
         seen_sequences.add(sequence)
         rows.append((sequence, active, peak))
-    if 0 <= partition < 12:
-        partition_counts[partition] += 1
+        if 0 <= partition < 12:
+            partition_counts[partition] += 1
 
 rows.sort()
 if len(rows) != 1200:
