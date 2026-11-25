@@ -1,0 +1,4 @@
+phase	run_id	start_epoch_ms	end_epoch_ms	records	unique_handlers	final_lag_rows	delay_ms
+warmup	adaptive-20261125T234330Z-warmup-28151	1795650210516	1795650280333	1200	1200	0	500
+pressure	adaptive-20261125T234440Z-pressure-28151	1795650280339	1795650301249	160	160	0	1300
+recovery	adaptive-20261125T234501Z-recovery-28151	1795650301252	1795650376021	1200	1200	0	500

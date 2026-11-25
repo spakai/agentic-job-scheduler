@@ -3,7 +3,7 @@ services:
     image: apache/kafka:3.8.0
     hostname: kafka
     ports:
-      - "9092:9092"
+      - "${KAFKA_HOST_PORT:-9092}:9092"
     environment:
       KAFKA_NODE_ID: "1"
       KAFKA_PROCESS_ROLES: "broker,controller"

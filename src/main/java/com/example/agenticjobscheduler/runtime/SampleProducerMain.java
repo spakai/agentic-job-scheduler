@@ -35,8 +35,8 @@ public final class SampleProducerMain {
     public static void main(String[] args) throws Exception {
         Options options = parseOptions(args);
         if (options.transport() == Transport.HTTP) {
-            if (options.load1200()) {
-                publishLoadHttp(options.fail());
+            if (options.loadCount() > 0) {
+                publishLoadHttp(options.fail(), options.loadCount());
             } else {
                 publishOneHttp(options.fail());
             }
@@ -45,8 +45,8 @@ public final class SampleProducerMain {
 
         String bootstrap = System.getenv().getOrDefault("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092");
         int partitions = Integer.parseInt(System.getenv().getOrDefault("KAFKA_TOPIC_PARTITIONS", "12"));
-        if (options.load1200() && partitions != DEMO_PARTITION_COUNT) {
-            throw new IllegalArgumentException("--load-1200 requires KAFKA_TOPIC_PARTITIONS=12");
+        if (options.loadCount() > 0 && partitions != DEMO_PARTITION_COUNT) {
+            throw new IllegalArgumentException("Load demos require KAFKA_TOPIC_PARTITIONS=12");
         }
         TopicProvisioner.ensureTopics(bootstrap, partitions);
 
@@ -58,8 +58,8 @@ public final class SampleProducerMain {
         properties.put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, ByteArraySerializer.class.getName());
         properties.put(ProducerConfig.MAX_REQUEST_SIZE_CONFIG, "1048576");
         try (KafkaProducer<byte[], byte[]> producer = new KafkaProducer<>(properties)) {
-            if (options.load1200()) {
-                publishLoad(producer, options.fail());
+            if (options.loadCount() > 0) {
+                publishLoad(producer, options.fail(), options.loadCount());
             } else {
                 publishOne(producer, options.fail());
             }
@@ -68,13 +68,27 @@ public final class SampleProducerMain {
 
     static Options parseOptions(String[] args) {
         boolean fail = false;
-        boolean load1200 = false;
+        int loadCount = 0;
         Transport transport = Transport.DIRECT_KAFKA;
         for (int index = 0; index < args.length; index++) {
             String argument = args[index];
             switch (argument) {
                 case "--fail" -> fail = true;
-                case "--load-1200" -> load1200 = true;
+                case "--load-1200" -> {
+                    if (loadCount != 0) {
+                        throw new IllegalArgumentException("Specify only one load option");
+                    }
+                    loadCount = DEMO_LOAD_COUNT;
+                }
+                case "--load-count" -> {
+                    if (loadCount != 0) {
+                        throw new IllegalArgumentException("Specify only one load option");
+                    }
+                    if (index + 1 >= args.length) {
+                        throw new IllegalArgumentException("--load-count requires a value");
+                    }
+                    loadCount = parseLoadCount(args[++index]);
+                }
                 case "--transport" -> {
                     if (index + 1 >= args.length) {
                         throw new IllegalArgumentException("--transport requires a value");
@@ -86,16 +100,29 @@ public final class SampleProducerMain {
                         transport = parseTransport(argument.substring("--transport=".length()));
                     } else {
                         throw new IllegalArgumentException("Usage: sample-producer "
-                                + "[--fail | --load-1200] "
+                                + "[--fail | --load-1200 | --load-count 1..1200] "
                                 + "[--transport direct-kafka|http]");
                     }
                 }
             }
         }
-        if (fail && load1200) {
-            throw new IllegalArgumentException("--fail and --load-1200 are mutually exclusive");
+        if (fail && loadCount > 0) {
+            throw new IllegalArgumentException("--fail and load options are mutually exclusive");
         }
-        return new Options(fail, load1200, transport);
+        return new Options(fail, loadCount, transport);
+    }
+
+    private static int parseLoadCount(String value) {
+        try {
+            int count = Integer.parseInt(value);
+            if (count < 1 || count > DEMO_LOAD_COUNT) {
+                throw new IllegalArgumentException("--load-count must be between 1 and "
+                        + DEMO_LOAD_COUNT);
+            }
+            return count;
+        } catch (NumberFormatException failure) {
+            throw new IllegalArgumentException("--load-count must be an integer", failure);
+        }
     }
 
     private static Transport parseTransport(String value) {
@@ -116,7 +143,8 @@ public final class SampleProducerMain {
                 + " partition=" + metadata.partition() + " offset=" + metadata.offset());
     }
 
-    private static void publishLoad(KafkaProducer<byte[], byte[]> producer, boolean fail) throws Exception {
+    private static void publishLoad(KafkaProducer<byte[], byte[]> producer,
+            boolean fail, int loadCount) throws Exception {
         AtomicInteger sequence = new AtomicInteger();
         Map<Integer, Integer> acceptedByPartition = new LinkedHashMap<>();
         Map<Integer, Long> firstOffsetByPartition = new LinkedHashMap<>();
@@ -124,11 +152,11 @@ public final class SampleProducerMain {
         for (int partition = 0; partition < DEMO_PARTITION_COUNT; partition++) {
             acceptedByPartition.put(partition, 0);
         }
-        for (int partition : loadPartitionOrder()) {
+        for (int partition : loadPartitionOrder(loadCount)) {
             UUID jobId = jobIdForPartition(partition, DEMO_PARTITION_COUNT);
             var job = sampleJob(fail,
                     sequence.incrementAndGet(),
-                    DEMO_LOAD_COUNT);
+                    loadCount);
             job = new JobEnvelope(job.schemaVersion(), jobId, job.executionId(),
                     job.jobType(), job.payload(), job.remainingAttempts());
             var metadata = producer.send(new ProducerRecord<>(TopicProvisioner.MAIN_TOPIC,
@@ -137,9 +165,9 @@ public final class SampleProducerMain {
             acceptedByPartition.put(partition, acceptedByPartition.get(partition) + 1);
             firstOffsetByPartition.putIfAbsent(partition, metadata.offset());
             lastOffsetByPartition.put(partition, metadata.offset());
-            if (sequence.get() % 100 == 0) {
+            if (sequence.get() % 100 == 0 || sequence.get() == loadCount) {
                 System.out.println("Load progress accepted=" + sequence.get()
-                        + " total=" + DEMO_LOAD_COUNT);
+                        + " total=" + loadCount);
             }
         }
         System.out.println("Load complete accepted=" + sequence.get()
@@ -162,25 +190,25 @@ public final class SampleProducerMain {
                 + " transport=http status=202");
     }
 
-    private static void publishLoadHttp(boolean fail) throws Exception {
+    private static void publishLoadHttp(boolean fail, int loadCount) throws Exception {
         AtomicInteger sequence = new AtomicInteger();
         Map<Integer, Integer> acceptedByPartition = new LinkedHashMap<>();
         for (int partition = 0; partition < DEMO_PARTITION_COUNT; partition++) {
             acceptedByPartition.put(partition, 0);
         }
         try (HttpClient client = HttpClient.newHttpClient()) {
-            for (int partition : loadPartitionOrder()) {
+            for (int partition : loadPartitionOrder(loadCount)) {
                 UUID jobId = jobIdForPartition(partition, DEMO_PARTITION_COUNT);
                 JobEnvelope job = sampleJob(fail,
                         sequence.incrementAndGet(),
-                        DEMO_LOAD_COUNT);
+                        loadCount);
                 job = new JobEnvelope(job.schemaVersion(), jobId, job.executionId(),
                         job.jobType(), job.payload(), job.remainingAttempts());
                 submitHttp(client, job);
                 acceptedByPartition.put(partition, acceptedByPartition.get(partition) + 1);
-                if (sequence.get() % 100 == 0) {
+                if (sequence.get() % 100 == 0 || sequence.get() == loadCount) {
                     System.out.println("Load progress accepted=" + sequence.get()
-                            + " total=" + DEMO_LOAD_COUNT + " transport=http");
+                            + " total=" + loadCount + " transport=http");
                 }
             }
         }
@@ -246,11 +274,15 @@ public final class SampleProducerMain {
         }
     }
 
-    private static List<Integer> loadPartitionOrder() {
-        List<Integer> sendOrder = new ArrayList<>(DEMO_LOAD_COUNT);
+    static List<Integer> loadPartitionOrder(int loadCount) {
+        if (loadCount < 1 || loadCount > DEMO_LOAD_COUNT) {
+            throw new IllegalArgumentException("Load count must be between 1 and "
+                    + DEMO_LOAD_COUNT);
+        }
+        List<Integer> sendOrder = new ArrayList<>(loadCount);
         Random random = new Random(Long.parseLong(System.getenv().getOrDefault(
                 "DEMO_RANDOM_SEED", "1200")));
-        for (int record = 0; record < DEMO_LOAD_COUNT; record++) {
+        for (int record = 0; record < loadCount; record++) {
             sendOrder.add(random.nextInt(DEMO_PARTITION_COUNT));
         }
         return sendOrder;
@@ -298,6 +330,6 @@ public final class SampleProducerMain {
         HTTP
     }
 
-    record Options(boolean fail, boolean load1200, Transport transport) {
+    record Options(boolean fail, int loadCount, Transport transport) {
     }
 }
