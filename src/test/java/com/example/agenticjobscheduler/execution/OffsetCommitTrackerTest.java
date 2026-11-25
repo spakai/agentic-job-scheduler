@@ -163,6 +163,27 @@ class OffsetCommitTrackerTest {
     }
 
     @Test
+    void commitSuccessReleasesOnlySnapshotPrefixWhenLaterSparseRecordsCompleteInFlight() {
+        var tracker = tracker(5);
+        var mainHead = deliver(tracker, MAIN, 10);
+        var mainBlocked = deliver(tracker, MAIN, 30);
+        var retryHead = deliver(tracker, RETRY, 7);
+        tracker.complete(mainHead, HANDLER_SUCCESS);
+        tracker.complete(retryHead, DLQ_ACKNOWLEDGED);
+        var batch = tracker.beginCommit().orElseThrow();
+        assertEquals(Map.of(MAIN, 11L, RETRY, 8L), batch.offsets());
+
+        // Completion after the snapshot must not be covered by the outstanding commit.
+        tracker.complete(mainBlocked, RETRY_ACKNOWLEDGED);
+        var retryLater = deliver(tracker, RETRY, 90);
+        tracker.complete(retryLater, HANDLER_SUCCESS);
+        tracker.commitSucceeded(batch);
+
+        assertEquals(2, tracker.retainedRecords());
+        assertEquals(Map.of(MAIN, 31L, RETRY, 91L), tracker.beginCommit().orElseThrow().offsets());
+    }
+
+    @Test
     void failedCommitCanCoalesceNewSafeProgress() {
         var tracker = tracker(2);
         tracker.complete(deliver(tracker, MAIN, 10), HANDLER_SUCCESS);
