@@ -90,6 +90,8 @@ services:
       DEMO_HANDLER_DELAY_MILLIS: "${DEMO_HANDLER_DELAY_MILLIS:-100}"
       DEMO_RUN_ID: "${DEMO_RUN_ID:-}"
       DEMO_RANDOM_SEED: "${DEMO_RANDOM_SEED:-1200}"
+      DEMO_HTTP_BASE_URL: "${DEMO_HTTP_BASE_URL:-http://http-api:8080}"
+      DEMO_HTTP_TIMEOUT_MILLIS: "${DEMO_HTTP_TIMEOUT_MILLIS:-15000}"
     depends_on:
       kafka:
         condition: service_healthy

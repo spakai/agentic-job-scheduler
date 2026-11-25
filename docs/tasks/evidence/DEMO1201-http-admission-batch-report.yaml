@@ -1,0 +1,92 @@
+batch_id: "DEMO1201"
+completed_tasks:
+  - "DEMO1201-T001"
+  - "DEMO1201-T002"
+  - "DEMO1201-T003"
+  - "DEMO1201-T004"
+blocked_tasks: []
+files_changed:
+  DEMO1201-T001:
+    - file: "src/main/java/com/example/agenticjobscheduler/runtime/SampleProducerMain.java"
+      change_type: "modified"
+      description: "Add direct-Kafka/HTTP transport selection and canonical HTTP publication."
+    - file: "src/test/java/com/example/agenticjobscheduler/runtime/SampleProducerMainTest.java"
+      change_type: "modified"
+      description: "Cover option parsing, request shape, accepted responses, and publication failure."
+  DEMO1201-T002:
+    - file: "scripts/run-demo-1200.sh"
+      change_type: "modified"
+      description: "Add a transport flag and HTTP readiness gate without duplicating the demo."
+    - file: "compose.yaml"
+      change_type: "modified"
+      description: "Pass HTTP admission connection settings to the tool-profile producer."
+  DEMO1201-T003:
+    - file: "demo_direct-kafka.md"
+      change_type: "modified"
+      description: "Document direct-Kafka and HTTP invocations and equivalent semantics."
+    - file: "README.md"
+      change_type: "modified"
+      description: "Point readers to the selectable demo transports."
+  DEMO1201-T004:
+    - file: "docs/tasks/DEMO1201-http-admission-transport.md"
+      change_type: "created"
+      description: "Record scope, decisions, validation, and remaining live-run gap."
+upstream_artifacts_consumed:
+  DEMO1201-T001:
+    - artifact: "specs/002-kafka-job-scheduling.md#11-acceptance-tests"
+      used_for: "B01, B04, B14, and B15 boundaries."
+    - artifact: "specs/006-http-admission-api.md#4-rest-contract"
+      used_for: "Canonical POST /v1/jobs request and 202 response contract."
+  DEMO1201-T002:
+    - artifact: "scripts/run-demo-1200.sh"
+      used_for: "Existing shared handler, lag, offset, and graph workflow."
+evidence_mapping:
+  DEMO1201-T001:
+    - upstream: "specs/006-http-admission-api.md#41-submit-a-job"
+      output: "SampleProducerMain#admissionRequestBody"
+      evidence: "SampleProducerMainTest#httpRequestUsesTheCanonicalAdmissionContract"
+    - upstream: "specs/006-http-admission-api.md#42-accepted-response"
+      output: "SampleProducerMain#submitHttp"
+      evidence: "SampleProducerMainTest#httpPublisherPostsAndRequiresMatchingAcceptedResponse"
+traceability:
+  - requirement: "Spec 002 B01/API01"
+    plan_item: "Shared canonical workload"
+    task: "DEMO1201-T001"
+    files:
+      - "src/main/java/com/example/agenticjobscheduler/runtime/SampleProducerMain.java"
+    status: "completed"
+  - requirement: "Spec 002 B04/B14/B15"
+    plan_item: "Reuse existing post-publication verification"
+    task: "DEMO1201-T002"
+    files:
+      - "scripts/run-demo-1200.sh"
+    status: "completed"
+protocol_violation: false
+errors: []
+warnings:
+  - "The direct-Kafka 1,200-record mode was not rerun in this session."
+test_results:
+  DEMO1201-T001:
+    command: "mvn -B -ntp -Dtest=SampleProducerMainTest test"
+    passed: 8
+    failed: 0
+    skipped: 0
+    failures: []
+  DEMO1201-T002:
+    command: "bash -n scripts/run-demo-1200.sh"
+    passed: 1
+    failed: 0
+    skipped: 0
+    failures: []
+  DEMO1201-T003:
+    command: "mvn -B -ntp test"
+    passed: 162
+    failed: 0
+    skipped: 0
+    failures: []
+  DEMO1201-T004:
+    command: "mvn -B -ntp package"
+    passed: 162
+    failed: 0
+    skipped: 0
+    failures: []

@@ -1,4 +1,4 @@
-# 1,200-record Kafka worker demo
+# 1,200-record direct-Kafka worker demo
 
 This demo verifies the main Kafka worker with enough records to exceed the
 demo's 250-record processing-window high watermark.
@@ -42,6 +42,7 @@ external-effect fencing. It also does not test retry/DLQ behavior.
 | Consumer group | `job-main-v1` |
 | Topic partitions | 12: P0-P11 |
 | Records | 1,200 |
+| Admission transport | `direct-kafka` by default; `http` optional |
 | Records per partition | Randomized; total 1,200 |
 | Partition assignment | Uniform random by deterministic seed |
 | Publish order | Randomized naturally by partition assignment |
@@ -93,15 +94,20 @@ partition count.
 
 ### 2. Publish the 1,200-record load
 
+The demo producer keeps one workload definition for both transports. Direct Kafka
+is the default and sends the same canonical records through a Kafka producer:
+
 ```sh
-docker compose --profile tools run --rm sample-producer --load-1200
+docker compose --profile tools run --rm sample-producer \
+  --load-1200 --transport direct-kafka
 ```
 
 To change the in-flight handler hold:
 
 ```sh
 DEMO_HANDLER_DELAY_MILLIS=250 \
-  docker compose --profile tools run --rm sample-producer --load-1200
+  docker compose --profile tools run --rm sample-producer \
+    --load-1200 --transport direct-kafka
 ```
 
 The delay is encoded in each demo record and defaults to 100 ms.
@@ -110,28 +116,53 @@ using a deterministic seed. Changing `DEMO_RANDOM_SEED` changes both
 inter-partition arrival order and the resulting per-partition counts; it keeps
 the total exactly 1,200.
 
-Expected producer output includes:
+To exercise the independent HTTP admission role instead, start the Compose
+stack and select HTTP:
+
+```sh
+docker compose up -d
+docker compose --profile tools run --rm sample-producer \
+  --load-1200 --transport http
+```
+
+HTTP mode submits one canonical `POST /v1/jobs` request per demo record. It
+includes stable `jobId` and `executionId` values, requires `202 Accepted`, and
+does not retry an ambiguous or failed request. The same deterministic
+partition-selection seed is used in both modes. Direct mode selects the Kafka
+partition explicitly; HTTP mode selects a `jobId` that hashes to that partition,
+so the API's keyed Kafka publication routes to the same partition.
+
+Expected producer output for either transport includes:
 
 ```text
-Load complete accepted=1200 topic=jobs.main.v1
+Load complete accepted=1200 ... topic=jobs.main.v1
 partitionCounts={random counts, one value per P0-P11, sum=1200}
 ```
 
-Each publish is acknowledged by Kafka before the producer reports progress.
+Each direct-Kafka publish is acknowledged by Kafka. Each HTTP admission is
+reported accepted only after the HTTP service has received a matching Kafka
+acknowledgment and returned `202`.
 
 ### Generate the graph automatically after completion
 
 Run the complete demo and graph workflow:
 
 ```sh
-./scripts/run-demo-1200.sh
+./scripts/run-demo-1200.sh --transport direct-kafka
 ```
 
-The script uses a unique `DEMO_RUN_ID`, publishes 1,200 success records,
-waits for 1,200 matching handler lines and zero main-group lag, and writes:
+Run the identical demo through the HTTP admission interface with:
+
+```sh
+./scripts/run-demo-1200.sh --transport http
+```
+
+`--transport direct-kafka` is the default when the flag is omitted. The script
+uses a unique `DEMO_RUN_ID`, publishes 1,200 success records, waits for 1,200
+matching handler lines and zero main-group lag, and writes:
 
 ```text
-docs/diagrams/demo1200-concurrency.svg
+docs/diagrams/demo1200-direct-kafka-concurrency.svg
 docs/tasks/evidence/DEMO1200-concurrency-success-handler-log.txt
 docs/tasks/evidence/DEMO1200-concurrency-summary.txt
 ```
@@ -184,8 +215,9 @@ observed peakActive 13; Pod B had 8 permits and observed peakActive 8.
 The per-pod graph is generated from separate Docker logs and uses timestamps,
 not global loadSequence values, as the X-axis. Each handler entry adds an in-flight
 sample; the graph schedules an estimated completion 100 ms later and decrements
-the actual event-counter active level. Replay duplicates are removed before
-counting unique partition traffic.
+the actual event-counter active level. Each panel's vertical scale matches that
+pod's configured permit limit, and the red dashed line marks that limit. Replay
+duplicates are removed before counting unique partition traffic.
 
 Count successful executions per partition:
 
@@ -223,7 +255,7 @@ that lag reaches zero, not that offsets start at 0.
 
 The run passes only when all of these are true:
 
-1. The producer reports `accepted=1200`.
+1. The selected transport reports `accepted=1200`.
 2. It reports randomized record counts whose sum is 1,200.
 3. The main worker logs 1,200 `loadMode=success` executions.
 4. The success log contains 1,200 unique `loadSequence` values.
@@ -244,7 +276,7 @@ The validated live run from 2026-11-18 recorded:
 - [Kafka consumer-group offsets](docs/tasks/evidence/DEMO1200-concurrency-group-offsets.txt)
 - [Concurrency and partition graph](docs/diagrams/demo1200-concurrency.svg)
 - [Two-main-worker live summary](docs/tasks/evidence/DEMO1200-two-main-summary.txt)
-- [Fresh rerun per-pod graph](docs/diagrams/demo1200-two-main-pods.svg)
+- [Fresh rerun per-pod graph](docs/diagrams/demo1200-direct-kafka-two-main-pods.svg)
 - [Randomized seed-1200 live summary](docs/tasks/evidence/DEMO1200-randomized-summary.txt)
 - [Randomized timestamped handler log](docs/tasks/evidence/DEMO1200-randomized-success-handler-log.txt)
 - [Randomized Kafka group offsets](docs/tasks/evidence/DEMO1200-randomized-group-offsets.txt)

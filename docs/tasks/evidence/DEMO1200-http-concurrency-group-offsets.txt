@@ -1,0 +1,14 @@
+
+GROUP           TOPIC           PARTITION  CURRENT-OFFSET  LOG-END-OFFSET  LAG             CONSUMER-ID                                                 HOST            CLIENT-ID
+job-main-v1     jobs.main.v1    9          812             812             0               consumer-job-main-v1-1-13247a42-4437-47ed-9d6f-ad8e3590ff40 /172.18.0.4     consumer-job-main-v1-1
+job-main-v1     jobs.main.v1    8          792             792             0               consumer-job-main-v1-1-13247a42-4437-47ed-9d6f-ad8e3590ff40 /172.18.0.4     consumer-job-main-v1-1
+job-main-v1     jobs.main.v1    7          888             888             0               consumer-job-main-v1-1-13247a42-4437-47ed-9d6f-ad8e3590ff40 /172.18.0.4     consumer-job-main-v1-1
+job-main-v1     jobs.main.v1    6          752             752             0               consumer-job-main-v1-1-13247a42-4437-47ed-9d6f-ad8e3590ff40 /172.18.0.4     consumer-job-main-v1-1
+job-main-v1     jobs.main.v1    11         788             788             0               consumer-job-main-v1-1-13247a42-4437-47ed-9d6f-ad8e3590ff40 /172.18.0.4     consumer-job-main-v1-1
+job-main-v1     jobs.main.v1    10         788             788             0               consumer-job-main-v1-1-13247a42-4437-47ed-9d6f-ad8e3590ff40 /172.18.0.4     consumer-job-main-v1-1
+job-main-v1     jobs.main.v1    5          760             760             0               consumer-job-main-v1-1-494255b7-5b2c-4c32-a47b-3e8de61225f8 /172.18.0.5     consumer-job-main-v1-1
+job-main-v1     jobs.main.v1    4          832             832             0               consumer-job-main-v1-1-494255b7-5b2c-4c32-a47b-3e8de61225f8 /172.18.0.5     consumer-job-main-v1-1
+job-main-v1     jobs.main.v1    3          792             792             0               consumer-job-main-v1-1-494255b7-5b2c-4c32-a47b-3e8de61225f8 /172.18.0.5     consumer-job-main-v1-1
+job-main-v1     jobs.main.v1    2          776             776             0               consumer-job-main-v1-1-494255b7-5b2c-4c32-a47b-3e8de61225f8 /172.18.0.5     consumer-job-main-v1-1
+job-main-v1     jobs.main.v1    1          801             801             0               consumer-job-main-v1-1-494255b7-5b2c-4c32-a47b-3e8de61225f8 /172.18.0.5     consumer-job-main-v1-1
+job-main-v1     jobs.main.v1    0          821             821             0               consumer-job-main-v1-1-494255b7-5b2c-4c32-a47b-3e8de61225f8 /172.18.0.5     consumer-job-main-v1-1

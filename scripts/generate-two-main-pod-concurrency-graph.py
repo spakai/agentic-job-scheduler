@@ -54,13 +54,13 @@ left, right = 105, 1510
 chart_width = right - left
 panel_top = [150, 500]
 panel_bottom = [390, 740]
-max_active = max(16, pod1_peak, pod2_peak)
+concurrency_limits = [16, 8]
 
 def x(sequence):
     return left + (sequence - 1) * chart_width / 1199
 
-def y(active, top, bottom):
-    return bottom - active * (bottom - top) / max_active
+def y(active, top, bottom, scale_max):
+    return bottom - active * (bottom - top) / scale_max
 
 all_rows = pod1_rows + pod2_rows
 if all_rows:
@@ -86,7 +86,7 @@ svg = [
     '.small{font:700 15px sans-serif;fill:#334155}',
     '</style>',
     '<text x="80" y="65" class="title">Main-only demo: Pod A and Pod B concurrency</text>',
-    '<text x="80" y="96" class="subtitle">1,200 randomized success records; Pod A=16 permits; Pod B=8 permits</text>',
+    '<text x="80" y="96" class="subtitle">1,200 randomized success records; Pod A=16 permits; Pod B=8 permits; each panel scaled to its limit</text>',
 ]
 
 for pod_index, (rows, partitions, partition_counts, peak) in enumerate(
@@ -96,12 +96,14 @@ for pod_index, (rows, partitions, partition_counts, peak) in enumerate(
 ):
     top = panel_top[pod_index - 1]
     bottom = panel_bottom[pod_index - 1]
+    concurrency_limit = concurrency_limits[pod_index - 1]
+    scale_max = concurrency_limit * 1.25
     pod_label = "A (16 permits)" if pod_index == 1 else "B (8 permits)"
-    svg.append('<text x="80" y="{}" class="label">Main worker {} - {} successful handlers, peakActive={}</text>'.format(
-        top - 20, pod_label, len(rows), peak
+    svg.append('<text x="80" y="{}" class="label">Main worker {} - {} successful handlers, peakActive={} / limit={}</text>'.format(
+        top - 20, pod_label, len(rows), peak, concurrency_limit
     ))
-    for tick in range(0, max_active + 1, max(1, max_active // 4)):
-        tick_y = y(tick, top, bottom)
+    for tick in range(0, concurrency_limit + 1, max(1, concurrency_limit // 4)):
+        tick_y = y(tick, top, bottom, scale_max)
         svg.append('<line x1="105" y1="{:.1f}" x2="1510" y2="{:.1f}" stroke="#e2e8f0"/>'.format(tick_y, tick_y))
         svg.append('<text x="87" y="{:.1f}" text-anchor="end" class="tick">{}</text>'.format(tick_y + 5, tick))
     duration_ms = max(1, (common_end - common_start.timestamp()) * 1000)
@@ -113,9 +115,9 @@ for pod_index, (rows, partitions, partition_counts, peak) in enumerate(
             tick_x, bottom + 28, "{} ms".format(tick_ms)
         ))
         tick_ms += tick_step
-    peak_y = y(peak, top, bottom)
+    limit_y = y(concurrency_limit, top, bottom, scale_max)
     svg.append('<line x1="105" y1="{:.1f}" x2="1510" y2="{:.1f}" stroke="#ef4444" stroke-width="2" stroke-dasharray="9 7"/>'.format(
-        peak_y, peak_y
+        limit_y, limit_y
     ))
     events = []
     for time_value, sequence_value, active_value in rows:
@@ -128,7 +130,7 @@ for pod_index, (rows, partitions, partition_counts, peak) in enumerate(
         active_count = max(0, active_count + delta)
         elapsed_ms = (event_time - common_start.timestamp()) * 1000
         event_x = left + elapsed_ms * chart_width / duration_ms
-        timeline_points.append("{:.1f},{:.1f}".format(event_x, y(active_count, top, bottom)))
+        timeline_points.append("{:.1f},{:.1f}".format(event_x, y(active_count, top, bottom, scale_max)))
     points = " ".join(timeline_points)
     svg.append('<polyline points="{}" fill="none" stroke="#2563eb" stroke-width="2" stroke-linejoin="round"/>'.format(points))
 
@@ -141,7 +143,7 @@ for pod_index, (rows, partitions, partition_counts, peak) in enumerate(
     ))
 
 svg.append('<text x="807" y="790" text-anchor="middle" class="label">Elapsed time (milliseconds)</text>')
-svg.append('<text x="38" y="445" text-anchor="middle" class="label" transform="rotate(-90 38 445)">Active at handler entry</text>')
+svg.append('<text x="38" y="445" text-anchor="middle" class="label" transform="rotate(-90 38 445)">Active at handler entry (panel-specific scale)</text>')
 svg.append('<text x="80" y="840" class="label">Partition ownership</text>')
 
 for partition in range(12):
@@ -154,7 +156,7 @@ for partition in range(12):
     svg.append('<text x="{}" y="892" text-anchor="middle" class="small" fill="#ffffff">P{}</text>'.format(bar_x + 44, partition))
     svg.append('<text x="{}" y="910" text-anchor="middle" class="tick">{}</text>'.format(bar_x + 44, owner))
 
-svg.append('<text x="80" y="970" class="tick">Source: one Docker log file per main-worker replica; activeAtStart is a pod-local handler-entry snapshot.</text>')
+svg.append('<text x="80" y="970" class="tick">Source: one Docker log file per main-worker replica; activeAtStart is pod-local. Red dashed line: configured concurrency limit.</text>')
 svg.append('</svg>')
 output.parent.mkdir(parents=True, exist_ok=True)
 output.write_text("\n".join(svg))

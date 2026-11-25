@@ -1,0 +1,19 @@
+2026-11-25T02:49:38Z live twelve-partition 1,200-record HTTP admission concurrency and commit run
+Run ID: demo-20261125T015812Z-27804
+Transport: http
+Admission: 1,200 accepted; randomized across P0-P11
+Random seed: 1200
+Handler delay: 100 ms
+Main concurrency: Pod A=16, Pod B=8
+Execution verticle pool: 4
+Demo retained window: 250 records
+Load concurrency summary loadCompleted=1200 peakActive=16
+Success handler lines: 1200
+Handler log lines including replay: 1201
+Duplicate replay lines: 1
+Unique load sequences: 1200
+Pod A handler lines: 561
+Pod B handler lines: 640
+Final lag rows: 0
+Partition counts:
+105 P0,100 P1 94 P2,98 P3 108 P4,90 P5 88 P6,122 P7 98 P8,103 P9 97 P10,97 P11
