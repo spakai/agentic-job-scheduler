@@ -81,7 +81,8 @@ mvn package
 Unit results are in `target/surefire-reports/`. Packaging produces
 `target/agentic-job-scheduler-0.1.0-SNAPSHOT.jar`; runtime entry points are
 `com.example.agenticjobscheduler.runtime.WorkerMain` and
-`com.example.agenticjobscheduler.runtime.SampleProducerMain`. `mvn test` and
+`com.example.agenticjobscheduler.runtime.SampleProducerMain`; the separate HTTP
+entry point is `com.example.agenticjobscheduler.admission.HttpApiMain`. `mvn test` and
 `mvn package` run the unit suite. `mvn verify` also runs Testcontainers cases in
 `src/test/java/**/*IT.java` for pause/poll/commit/resume and worker handoff,
 partition-routing, failed retry publication recovery, and DLQ behavior. Compose
@@ -90,6 +91,47 @@ after child-JVM loss; `KafkaWorkerIT` covers confirmed and unconfirmed handler
 cancellation. The latest [C12 validation](docs/tasks/evidence/C12-cooperative-sticky-validation.txt)
 passed 127 unit tests and 20 Kafka integration tests. Kubernetes fault testing and
 the broader campaign remain pending; see the [chaos runbook](docs/CHAOS.md).
+
+## HTTP admission
+
+Clients that should retain an HTTP integration can submit one job at a time:
+
+```sh
+curl --fail-with-body \
+  -H 'Content-Type: application/json' \
+  -d '{"jobType":"demo.echo","payload":{"message":"hello"}}' \
+  http://127.0.0.1:8080/v1/jobs
+```
+
+The response is `202 Accepted` only after Kafka acknowledges the canonical
+Spec 002 record on `jobs.main.v1`. It is not a completion result. The HTTP role
+has no GET/status/query endpoint and does not call the worker handler.
+
+Clients that need retry-safe requests should generate and send both `jobId` and
+`executionId` as canonical lowercase UUIDs. Repeating the same request may
+append another physical Kafka record; the service provides no durable HTTP
+deduplication. A `503` after publication is ambiguous: the record may have
+reached Kafka. Generated IDs are new on every request that omits them.
+
+The local Compose role is separate from main and retry workers:
+
+```sh
+docker compose up --build kafka main-worker-a main-worker-b http-api
+```
+
+It binds only to `127.0.0.1:8080`. Production TLS, authentication, and
+authorization remain deployment concerns and are not provided by this local
+demo. Operational endpoints are:
+
+- `GET /health/live`
+- `GET /health/ready`
+- `GET /metrics` (bounded Prometheus labels)
+
+The HTTP process runs one `HttpAdmissionVerticle` and one asynchronous Kafka
+producer. It does not deploy a consumer, job handler, or worker execution
+verticle, and it cannot reuse worker handler permits or offsets. Main, retry,
+and HTTP roles scale independently. See [Spec 006](specs/006-http-admission-api.md)
+and [ADR 11](arch.md#adr-11-http-admission-is-a-separate-producer-only-process).
 
 ## Restart with partially committed partitions
 

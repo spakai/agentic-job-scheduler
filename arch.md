@@ -1,7 +1,8 @@
 # Architecture documentation (arc42)
 
-Snapshot: 2026-11-16, H03–H06 runtime hardening completed; consumer/execution
-verticle separation implemented (see the consumer worker verticles task record).
+Snapshot: 2026-11-24, HTTP admission API implemented for [Spec 006](specs/006-http-admission-api.md);
+H03–H06 runtime hardening and consumer/execution verticle separation remain
+implemented (see the consumer worker verticles task record).
 [Spec 002](specs/002-kafka-job-scheduling.md) is the requirements and
 architecture authority; this document follows the [arc42](https://arc42.org)
 template and records decisions as ADRs (section 9). [Spec 001](specs/001-job-lifecycle.md)
@@ -13,14 +14,16 @@ is historical.
 
 ### 1.1 Requirements overview
 
-Clients publish jobs to Kafka. Vert.x workers consume them as soon as records,
+Clients publish jobs to Kafka directly or submit the same canonical envelope
+through the HTTP admission role. Vert.x workers consume them as soon as records,
 worker capacity, and the adaptive limiter allow. Each handler failure decrements
 `remainingAttempts` once. A positive budget goes to a retry topic consumed by
 separate, slower retry workers; zero goes to a dead-letter queue (DLQ). Kafka records and consumer
 offsets are the only durable backlog.
 
-There is no PostgreSQL, Flyway, REST API, delayed-job timer, scheduling state
-topic, or RocksDB index. EDR is deferred. The current runtime hardening closes
+The HTTP role is admission-only and publishes to Kafka; it has no job status,
+query, or execution endpoint. There is no PostgreSQL, Flyway, delayed-job timer,
+scheduling state topic, or RocksDB index. EDR is deferred. The runtime hardening closes
 H03–H06: enforce the process-wide active-handler limit, allocate replacement
 capacity only to runnable job-lane heads, refuse mismatched topic counts, and
 preserve correct new-group versus invalid-offset startup semantics.
@@ -32,7 +35,7 @@ preserve correct new-group versus invalid-offset startup semantics.
 | 1 | No lost work | Commit only completed record prefixes; retry/DLQ handoff acknowledged before the source completes |
 | 2 | Per-job exclusion | One execution per jobId at a time within a topic under stable ownership; different IDs run concurrently |
 | 3 | Bounded resources | Retained records/bytes and handler concurrency are capped; intake pauses instead of growing memory |
-| 4 | Operational independence | Main and retry workers scale, fail, and are rate-limited independently |
+| 4 | Operational independence | HTTP admission, main workers, and retry workers scale, fail, and are capacity-limited independently |
 | 5 | Runtime safety | Admission, fairness, and startup checks fail visibly on invalid partition or offset state rather than silently proceeding |
 | 6 | Explainable behavior | Invariants are tested at crash/commit boundaries with recorded evidence |
 
@@ -40,7 +43,7 @@ preserve correct new-group versus invalid-offset startup semantics.
 
 | Role | Expectation |
 | --- | --- |
-| Job clients | Submit jobs by publishing to `jobs.main.v1`; replay-tolerant outcome |
+| Job clients | Publish to Kafka or POST the HTTP admission contract; handle ambiguous duplicate outcomes |
 | Handler authors | Implement replay-safe, concurrency-tolerant handlers using `(jobId, executionId)` as idempotency key |
 | Operators | Scale roles, monitor lag/oldest-unprocessed age, inspect the DLQ |
 | Maintainers/reviewers | Traceable acceptance IDs (B01–B20) and evidence per increment |
@@ -55,7 +58,8 @@ preserve correct new-group versus invalid-offset startup semantics.
 | Kafka provides durability; no database or state store | Spec 002 §1 |
 | Fixed topic partition counts (default 12/12/3) | Spec 002 §3 |
 | Client records ≤ 256 KiB; internal records reserve ≥ 512 KiB | Spec 002 §4 |
-| No HTTP API, production business handler, or Kubernetes deployment in this increment | Spec 002 §1 |
+| HTTP clients interact with a separate admission process; no worker co-location | Spec 006 §3 |
+| Kafka-acknowledged `202` means admission, not execution completion | Spec 006 §4 |
 | Never block the event loop; never share a native Kafka consumer across threads | Spec 002 §2 |
 
 ---
@@ -65,7 +69,9 @@ preserve correct new-group versus invalid-offset startup semantics.
 ### 3.1 Business context
 
 ```text
- Job client ──publish (key = jobId)──> jobs.main.v1 ──> Main workers ──> Job handler
+ Direct client ──publish (key = jobId)──┐
+                                        ├──> jobs.main.v1 ──> Main workers ──> Job handler
+ HTTP client ──POST /v1/jobs──> HTTP API ─┘
                                                             │ retryable failure
                                                             ▼
                                        jobs.retry.v1 ──> Retry workers ──> Job handler
@@ -80,9 +86,11 @@ preserve correct new-group versus invalid-offset startup semantics.
 | --- | --- | --- |
 | Kafka broker | Kafka protocol; idempotent producer (`acks=all`), manual-commit consumers | Local Compose: single KRaft broker, RF 1, persistent volume. Deployment baseline: 3 brokers, RF 3, min ISR 2 |
 | Job handler | `JobHandler` future-returning SPI | Demo handler only; completes only after work has stopped |
-| Docker/Compose | `compose.yaml`, `Dockerfile` | Roles `main-worker`, `retry-worker`, tool profile `sample-producer` |
+| HTTP admission | `POST /v1/jobs`; health and metrics endpoints | Separate process/JVM, one HTTP verticle and one Kafka producer |
+| Docker/Compose | `compose.yaml`, `Dockerfile` | Roles `http-api`, main/retry workers, tool profile `sample-producer` |
 
-Out of scope: HTTP clients, databases, external-effect fencing.
+Out of scope: job-status APIs, databases, TLS/authentication implementation,
+and external-effect fencing.
 
 ---
 
@@ -96,6 +104,7 @@ Out of scope: HTTP clients, databases, external-effect fencing.
 | Retry isolation | Separate topic, group, and worker deployment | 6, 7 |
 | Bounded resources | Processing window with pause/resume; adaptive main limiter; retry token bucket | 8, 9 |
 | Safe input | Validate raw bytes before dispatch; bounded DLQ samples | 10 |
+| HTTP compatibility | Separate nonblocking admission process; broker acknowledgment before `202` | 11 |
 
 ---
 
@@ -114,6 +123,7 @@ Out of scope: HTTP clients, databases, external-effect fencing.
 | H05-H06 | `TopicProvisioner` and `KafkaWorker` startup policy | Refuse mismatched topic counts and preserve correct offset behavior for new vs. established groups | startup safety checks |
 | L06 | `ProcessingWindow`, `ProcessingWindowKafkaController`, `KafkaWorker` runtime | Bound intake, run main/retry roles, publish acknowledged handoffs, commit safe offsets | 5 window unit + 19 dispatcher + 5 limiter + 2 Kafka integration |
 | Consumer/execution separation | `WorkerRuntime`, `ConsumerVerticle`, `ExecutionVerticlePool` | Keep Kafka ownership and settlement in one consumer verticle; dispatch nonblocking handler calls to separate execution contexts | 3 pool unit + 6 focused Kafka cases |
+| HTTP admission | `HttpAdmissionVerticle`, `KafkaJobPublisher`, `AdmissionLimiter` | Strictly map HTTP requests to canonical main records and return `202` only after broker acknowledgment | focused contract + broker integration tests |
 
 These are executed cases, including parameterized inputs. L03 tests run real
 Vert.x event loops with controlled handler futures; crash/replay tests use a
@@ -136,6 +146,48 @@ Runtime classes (`runtime/`): `WorkerMain` (one role per process), `WorkerRuntim
 `ExecutionVerticlePool` (nonblocking handler contexts), `KafkaWorker`
 (consumer group member and partition state), `WorkerConfig`/`WorkerRole`, `TopicProvisioner`,
 `JobRecordEncoder`, `DemoJobHandler`, `SampleProducerMain`.
+
+HTTP admission classes (`admission/`) are a separate runtime:
+`HttpApiMain`, `HttpApiRuntime`, `HttpAdmissionVerticle`, `HttpApiConfig`,
+`AdmissionRequestDecoder`, `AdmissionEnvelopeMapper`, `KafkaJobPublisher`,
+`AdmissionLimiter`, `KafkaReadinessProbe`, and `AdmissionMetrics`.
+
+### 5.3 HTTP admission verticle and process boundary
+
+Each HTTP API pod runs one JVM, one Vert.x instance, one
+`HttpAdmissionVerticle`, one bounded Kafka producer, and no consumer group
+member. The verticle owns the HTTP server, routes, request admission counters,
+producer callbacks, and permit release on its event-loop context. It does not
+instantiate a job handler and does not own Kafka consumer offsets.
+
+“One verticle” is a logical ownership boundary, not one dedicated operating
+system thread per request. Vert.x schedules asynchronous callbacks on an event
+loop; many requests may be in flight without blocking a thread for each one.
+JSON mapping and validation are bounded to the 256 KiB request/envelope limit.
+The producer send remains asynchronous.
+
+```text
++---------------- HTTP API process/JVM ----------------+
+| one Vert.x instance                                  |
+|                                                      |
+| HttpAdmissionVerticle (one event-loop owner)         |
+|  - POST /v1/jobs + health + metrics                  |
+|  - bounded body/admission limit                      |
+|  - decode -> canonical main envelope -> final check  |
+|  - one Kafka producer, asynchronous send             |
+|                                                      |
+| no ConsumerVerticle, ExecutionVerticlePool, handler, |
+| ProcessingWindow, consumer assignment, or offset    |
++---------------------------+--------------------------+
+                            | broker-acknowledged append
+                            v
+                    jobs.main.v1 / Kafka
+```
+
+HTTP and worker processes do not share Vert.x contexts, producer/consumer
+ownership, handler permits, queues, threads, or processing-window budgets.
+Co-locating those roles would be a new architectural decision and would need a
+new failure/capacity model.
 
 ### 5.2 Level 2: consumer verticle and partition ownership
 
@@ -307,6 +359,32 @@ owner context and rejects direct API calls from the wrong context.
 ---
 
 ## 6. Runtime view
+
+### 6.0 HTTP admission
+
+```text
+HTTP client
+  | POST request
+  v
+HttpAdmissionVerticle
+  | acquire bounded permit
+  | validate UTF-8 JSON, paired IDs, media type, and size
+  | generate IDs only when both are omitted
+  | encode key + canonical Spec 002 main envelope
+  | validate final key/value through EnvelopeValidator
+  v
+KafkaJobPublisher -> jobs.main.v1
+  | send future acknowledged -> 202
+  | failure/ambiguous deadline -> 503
+  `--------------------------------> no worker call, no status lookup
+```
+
+If the HTTP response times out with `503`, the send outcome may still be
+ambiguous. The API does not send a second application-level record. The
+admission permit remains associated with the underlying send future until it
+settles, bounding unresolved publication pressure. A client that retries must
+reuse stable supplied IDs and identical content; duplicate admission remains
+possible and is not deduplicated durably.
 
 ### 6.1 Validate before dispatch (L01)
 
@@ -749,20 +827,23 @@ with explicit spec and recovery-contract changes.
                  | main / retry / dlq topics   |
                  +--------------+--------------+
                                 |
-        +-----------------------+-----------------------+
-        |                                               |
- main-worker (WORKER_ROLE=main)               retry-worker (WORKER_ROLE=retry)
- group job-main-v1, scale N                   group job-retry-v1, scale M
- concurrency adaptive, max 128                concurrency default 2, 1 start/s
-        one consumer verticle, one ProcessingWindow per process
-        separate execution verticle pool per process
+        +-----------------------+-----------------------+-------------------+
+        |                       |                       |                   |
+ http-api (HTTP_PORT=8080)    main-worker              retry-worker
+ producer only                 group job-main-v1         group job-retry-v1
+ no consumer/handler            scale N, adaptive         scale M, slower
+ no shared worker permits       one consumer per process  one consumer per process
+                              concurrency max 128       concurrency 2, 1 start/s
+                              separate execution pool   separate execution pool
 ```
 
 `WorkerMain` uses `WorkerRuntime` to deploy exactly one `ConsumerVerticle`
 containing a `KafkaWorker`, plus a separate execution verticle pool. Its role comes from
-`WORKER_ROLE`. [compose.yaml](compose.yaml) defines `kafka`, `main-worker`,
-`retry-worker`, and a `sample-producer` tool profile; the broker uses a named
-volume. Topics are provisioned idempotently at worker start. The three-broker,
+`WORKER_ROLE`. `HttpApiMain` deploys only the HTTP admission runtime. [compose.yaml](compose.yaml)
+defines `kafka`, `http-api`, main workers, retry workers, and a `sample-producer`
+tool profile; the broker uses a named volume. The local API publishes only to
+`127.0.0.1:8080` and is not a production security boundary. Topics are
+provisioned idempotently at worker start; the HTTP API only describes them. The three-broker,
 RF 3, min ISR 2 baseline is documented, not provisioned locally.
 
 Evidence: the Compose stack was run with two retry replicas, a persistent-volume
@@ -794,13 +875,15 @@ Sustained broker outage behavior has not been tested.
 
 ## 9. Architecture decisions
 
-Status values: Accepted, Superseded. Context for all ADRs is [Spec 002](specs/002-kafka-job-scheduling.md).
+Status values: Accepted, Superseded. Worker and Kafka context comes from
+[Spec 002](specs/002-kafka-job-scheduling.md); HTTP admission context comes from
+[Spec 006](specs/006-http-admission-api.md).
 
 ### ADR 1: Kafka is the durable backlog; no database or state store
 
 - **Status:** Accepted (supersedes Spec 001's PostgreSQL design).
 - **Context:** A job scheduler normally needs durable pending state.
-- **Decision:** Kafka records and consumer-group offsets hold pending work. No PostgreSQL, Flyway, REST API, scheduling-state topic, or RocksDB.
+- **Decision:** Kafka records and consumer-group offsets hold pending work. No PostgreSQL, Flyway, job-status REST API, scheduling-state topic, or RocksDB. A producer-only HTTP admission adapter may append canonical records but owns no execution state.
 - **Consequences:** Simple operations and replay from offsets. Records can expire under retention during long outages; no durable deduplication or query API.
 
 ![ADR 1: Kafka records retain work, while consumer-group offsets determine where a worker resumes after restart.](docs/diagrams/adr-01-kafka-backlog.svg)
@@ -987,6 +1070,25 @@ rejected for routing preserve their identity and original job. Samples are DLQ
 data, not log output. Neither branch permits a source commit before successful
 handling or the required DLQ acknowledgment (B01/B05/B17).
 
+### ADR 11: HTTP admission is a separate producer-only process
+
+- **Status:** Accepted.
+- **Context:** Existing HTTP clients need an adapter without changing workers
+  into an HTTP execution service or sharing their constrained handler contexts.
+- **Decision:** `HttpApiMain` runs a separate process/JVM with one
+  `HttpAdmissionVerticle`, one bounded idempotent Kafka producer, and read-only
+  readiness metadata. It never deploys a worker consumer, handler verticle, or
+  `ProcessingWindow`. A `202` follows broker acknowledgment; an ambiguous
+  timeout returns `503` without an application-level resend.
+- **Alternatives:** Deploy HTTP beside the worker in one Vert.x process; call
+  handlers synchronously from HTTP; expose a Kafka proxy; or add a durable
+  admission database/outbox.
+- **Consequences:** HTTP and worker failure/scaling domains remain independent,
+  and worker permits cannot be consumed by HTTP traffic. Scaling API pods
+  increases append capacity rather than worker throughput. The API has no
+  durable status or deduplication state, so client retries can produce duplicate
+  records and worker replay remains possible.
+
 ---
 
 ## 10. Quality requirements
@@ -1000,6 +1102,10 @@ handling or the required DLQ acknowledgment (B01/B05/B17).
 | Malformed/oversized/wrong-partition input | Bounded DLQ record | `KafkaWorkerIT` |
 | Broker restart with queued main work | Work processed after restart | Manual Compose check |
 | Worker crash after success, before commit | Record replays; handler tolerates it | Simulated broker store only |
+| Valid HTTP submission | Exact keyed canonical record is broker-acknowledged before `202` | `HttpAdmissionKafkaIT` |
+| Broker acknowledgment remains ambiguous | `503`; no second application-level append; retry may duplicate | HTTP verticle controlled-future test |
+| HTTP overload | `429` before an unbounded queue forms | `AdmissionLimiterTest`, HTTP saturation test |
+| Slow/incomplete upload | `408` and admission capacity is released | bounded request-read timer in `HttpAdmissionVerticle` |
 
 ---
 
@@ -1017,6 +1123,8 @@ handling or the required DLQ acknowledgment (B01/B05/B17).
 | Kubernetes and seeded chaos | No fixture/campaign delivered by C12; see the [C01–C15 ledger](docs/CHAOS.md#acceptance-ledger) |
 | Retention expiry of unprocessed records | Documented risk; monitoring not implemented |
 | Fresh-session learning exercise | L03 handoff prepared; resumption pending |
+| HTTP authentication and TLS | Deferred deployment concern; Compose binding is local-only and not a public security boundary |
+| HTTP durable idempotency | No durable store/outbox; a repeated stable request can create another physical Kafka record |
 
 The older “unverified” entries above are superseded by the
 [C12 clean regression evidence](docs/tasks/evidence/C12-cooperative-sticky-validation.txt):
@@ -1040,6 +1148,7 @@ for this branch and required-check merge enforcement have not been verified here
 | safe prefix | Contiguous run of completed delivered records eligible for offset commit |
 | processing window | Process-scoped bound on retained records/bytes |
 | DLQ | `jobs.dlq.v1`, for exhausted handler failures or invalid input |
+| HTTP admission verticle | Producer-only event-loop owner that validates and acknowledges HTTP requests; it is not a worker execution slot |
 
 Learning check: if A1 has stopped but its retry publication fails, can A2 start?
 **No. Handler capacity is free, but Job A's gate remains held.**
