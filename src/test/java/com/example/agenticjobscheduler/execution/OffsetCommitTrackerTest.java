@@ -142,6 +142,27 @@ class OffsetCommitTrackerTest {
     }
 
     @Test
+    void staleCommitResultAfterRevocationCannotReleaseOrClearReplacementTrackerCommit() {
+        var beforeRevocation = tracker(1);
+        beforeRevocation.complete(deliver(beforeRevocation, MAIN, 10), HANDLER_SUCCESS);
+        var stale = beforeRevocation.beginCommit().orElseThrow();
+
+        var afterRevocation = tracker(1);
+        assertThrows(IllegalArgumentException.class, () -> afterRevocation.commitSucceeded(stale));
+        assertThrows(IllegalArgumentException.class, () -> afterRevocation.commitFailed(stale));
+
+        var replay = deliver(afterRevocation, MAIN, 10);
+        afterRevocation.complete(replay, HANDLER_SUCCESS);
+        var current = afterRevocation.beginCommit().orElseThrow();
+        assertThrows(IllegalArgumentException.class, () -> afterRevocation.commitFailed(stale));
+        assertThrows(IllegalArgumentException.class, () -> afterRevocation.commitSucceeded(stale));
+        assertTrue(afterRevocation.beginCommit().isEmpty()); // Current request is still outstanding.
+        assertEquals(1, afterRevocation.retainedRecords());
+        afterRevocation.commitSucceeded(current);
+        assertEquals(0, afterRevocation.retainedRecords());
+    }
+
+    @Test
     void failedCommitCanCoalesceNewSafeProgress() {
         var tracker = tracker(2);
         tracker.complete(deliver(tracker, MAIN, 10), HANDLER_SUCCESS);
