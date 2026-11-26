@@ -1,6 +1,6 @@
 # S007: Implement adaptive external-service pressure handling
 
-Status: planned
+Status: in progress
 
 ## Scope and plan
 
@@ -92,14 +92,16 @@ Exit gate: every A01-A13 row is backed by a named test/evidence artifact or expl
 ## Progress and decisions
 
 - 2026-11-26: Spec 007 and arc42 updates added on PR #46. No implementation is included in that PR.
-- Planned decision: prefer a typed per-invocation reporter as the default signal API; preserve exception wrapping only as a transport concern, never as a text-parsing mechanism.
-- Pending implementation decision: exact Java API shape for preserving compatibility with current `JobHandler` lambdas and `ExecutionVerticlePool` dispatch.
+- 2026-11-26: Stage 1 started on branch `docs/spec-007-adaptive-pressure` in PR #46 at the user's direction.
+- Decided: use a typed per-invocation reporter as a default `JobHandler` overload so existing functional handlers remain source-compatible. Exception wrapping is a transport concern and is never inspected for pressure.
+- Added explicit REST and database adapter boundaries for reviewed `503`, unavailable, and deadline outcomes. Logical dependency labels are allow-listed and invocation reports are deduplicated by dependency and category.
+- `git diff --check` passes for the Stage 1 working tree. Maven tests are not yet executed because `mvn` is unavailable and both system-wide installation and an externally downloaded user-local Maven binary were denied by the environment.
 
 ## Evaluation
 
 | Check | Commit | Command or workflow | Result | Evidence |
 | --- | --- | --- | --- | --- |
-| A01-A03/A07/A13 classification and negative cases | pending | focused Maven selector for external-pressure unit tests | not run | pending |
+| A01-A03/A07/A13 classification and negative cases | working tree after `e3004d5` | `mvn -B -ntp '-Dtest=ExternalPressureSignalTest' test` | blocked: `mvn` unavailable; local installation and external download denied | `docs/tasks/S007-adaptive-external-pressure.md` and `src/test/java/com/example/agenticjobscheduler/execution/ExternalPressureSignalTest.java` |
 | A04-A07 limiter bounds, duplicate behavior, and hysteresis | pending | `mvn -B -ntp '-Dtest=AdaptiveLimiterTest' test` | not run | pending |
 | A08-A09 worker replacement starts and timeout accounting | pending | focused `KafkaWorkerIT` selectors | not run | pending |
 | A10-A11 main/retry isolation, handoff, and offset safety | pending | Docker/Testcontainers `mvn verify` | not run | pending |
@@ -122,10 +124,10 @@ without conversion into a passing claim.
 
 ## Handoff and review
 
-- Latest verified commit and working-tree changes: `14628da` documents the proposed policy on `docs/spec-007-adaptive-pressure`; implementation is not present.
-- Completed steps: Spec 007 architecture requirements and this staged implementation plan.
-- Next concrete step: merge the documentation PR, create an implementation branch, then start Stage 1 with the handler reporter and typed classification tests.
-- Open risks/decisions and owner: implementation owner must select and review the handler/reporter API before runtime wiring; operator/handler authors must confirm the registered dependency-name vocabulary.
+- Latest verified commit and working-tree changes: `e3004d5` is the documentation-plan base; the working tree now contains Stage 1 pressure types, registry, adapters, reporter, compatibility overload, and focused tests.
+- Completed steps: Spec 007 architecture requirements, implementation plan, and the Stage 1 source/test increment.
+- Next concrete step: run `mvn -B -ntp '-Dtest=ExternalPressureSignalTest' test` once Maven is available, then start Stage 2 limiter-policy changes.
+- Open risks/decisions and owner: runtime owner must choose the registered dependency-name vocabulary and wire reporters in `ExecutionVerticlePool`/`KafkaWorker`; no in-repository REST or database client currently exists to map automatically.
 - Reviewer findings and disposition: PR review pending.
 - PR / final outcome: Spec 007 documentation PR #46; implementation PR not created.
 
