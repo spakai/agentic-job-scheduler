@@ -1,21 +1,23 @@
 # Task DEMO1202: Demonstrate main-worker adaptive concurrency
 
-Status: ready for review
+Status: updated for Spec 007 external responses; ready for review
 
 ## Scope and plan
 
 - Requirement / issue: Add a repeatable local demo that makes healthy additive
-  recovery and slow-handler multiplicative decrease observable.
-- Spec 002 acceptance IDs: B13.
+  recovery, slow-handler decrease, and typed external-response decrease observable.
+- Spec 002 acceptance IDs: B13. Spec 007 acceptance IDs: A01, A02, A03, A04, A07,
+  A08, A12.
 - Base commit and branch: `df88364` on `feature/adaptive-limiter-showcase`.
 - Authorized scope and unresolved decisions: Use the existing Kafka worker and
   `demo.echo` handler in an isolated Compose project. Keep the limiter algorithm
   unchanged; add bounded observability and demo tooling only.
 - Expected behavior and invariant: With a backlog, healthy windows increase the
   main worker's per-process limit by one; windows with at least 20 slow completed
-  attempts halve it. The limit never cancels active work. A final healthy phase
+  attempts halve it. Reviewed external REST/DB outcomes halve once even below
+  the sample floor. The limit never cancels active work. A final healthy phase
   demonstrates recovery. Evidence distinguishes configured limit from measured
-  handler concurrency.
+  handler concurrency and records all accepted external response classes.
 - Files/components expected to change: Adaptive-window logging in `KafkaWorker`,
   bounded load-count support in `SampleProducerMain`, focused tests, an isolated
   demo runner and visualization, README/demo guidance, and this task record.
@@ -56,6 +58,15 @@ Status: ready for review
   measured a healthy increase (16 to 17), slow decrease (22 to 11), and healthy
   recovery increase (2 to 3); 34 adaptive windows and 2,560 handler starts were
   retained as evidence.
+- 2026-11-26: Updated the demo for Spec 007. The 12-record external-response
+  phase mixes REST 503, REST read timeout, and database statement timeout. The
+  live run showed an `EXTERNAL_PRESSURE` decision of 21 to 10 with 12
+  completions, then the existing aggregate-pressure and recovery behavior. The
+  full run retained 2,572 handler starts and completed every phase with zero lag.
+- 2026-11-26: Added independent production trigger switches. Operators can
+  disable slow-latency and external-pressure adaptation separately. The demo
+  supports `DEMO_MODE=combined`, `DEMO_MODE=p95`, and `DEMO_MODE=external`;
+  each mode fails unless its selected trigger is demonstrated.
 
 ## Evaluation
 
@@ -68,10 +79,12 @@ Status: ready for review
 | SVG output validity | working tree at `df88364` | `python3 -c 'import xml.etree.ElementTree as ET; ET.parse("docs/diagrams/demo-adaptive-limiter.svg")'` | passed | `docs/diagrams/demo-adaptive-limiter.svg` |
 | Graph negative case | working tree at `df88364` | temporary evidence with slow-window decreases removed | passed; generator rejected the evidence | generator emitted “Pressure did not show a >=20-sample slow-window limit decrease” |
 | Live adaptive decrease and recovery | working tree at `df88364` | `bash scripts/run-demo-adaptive-limiter.sh` | passed; 1,200/160/1,200 unique handlers, zero lag after each phase; healthy 16→17, slow 22→11, recovery 2→3 | `docs/tasks/evidence/DEMO1202-adaptive-limiter-summary.txt`, window/handler logs, and graph |
+| External-response live demo | Spec 007 working tree | `bash scripts/run-demo-adaptive-limiter.sh` | passed; 1,200/12/160/1,200 handlers and zero lag; external 21→10 with 12 completions; all three reviewed REST/DB outcomes | `docs/tasks/evidence/DEMO1202-adaptive-limiter-summary.txt`, window/handler logs, and graph |
 
-Include a negative case: if no observed window has enough completed attempts or
-the graph lacks both a decrease and subsequent increase, the demo must fail
-rather than claim the adaptive behavior was shown.
+Include negative cases: if no slow window has enough completed attempts, no
+external window bypasses the sample floor, not all reviewed external outcomes
+were observed, or the graph lacks both a decrease and subsequent increase, the
+demo must fail rather than claim the adaptive behavior was shown.
 
 ## Failure analysis and correction
 
@@ -91,6 +104,10 @@ rather than claim the adaptive behavior was shown.
 - Rerun and remaining uncertainty: The complete script passed end to end after
   correction. It asserted healthy increase, slow-window decrease with at least
   20 samples, healthy recovery increase, all unique handler counts, and zero lag.
+- The first Spec 007 demo run exposed a harness-only failure: `DEMO_EXTERNAL_RESPONSE`
+  was not passed through the Compose producer environment, and the shell `awk`
+  predicate was malformed. The corrected run passed and rejects future runs that
+  lack the expected typed-pressure decision.
 
 ## Handoff and review
 
@@ -99,8 +116,9 @@ rather than claim the adaptive behavior was shown.
 - Completed steps: Added window metrics, bounded producer load counts, isolated
   Compose runner, assertions, graph, documentation, tests, and live evidence.
 - Next concrete step: Review the branch and open a PR if desired.
-- Open risks/decisions and owner: The demonstration uses a controlled
-  `demo.echo` timer and is not a production workload profile.
+- Open risks/decisions and owner: The demonstration uses controlled
+  `demo.echo` timer and adapter outcomes; it is not a production REST/DB client
+  workload profile.
 - Reviewer findings and disposition: Pending.
 - PR / final outcome: Pending.
 

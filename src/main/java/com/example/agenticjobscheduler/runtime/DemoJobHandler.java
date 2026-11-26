@@ -1,11 +1,16 @@
 package com.example.agenticjobscheduler.runtime;
 
+import com.example.agenticjobscheduler.execution.DatabasePressureAdapter;
+import com.example.agenticjobscheduler.execution.ExternalPressureRegistry;
+import com.example.agenticjobscheduler.execution.ExternalPressureReporter;
 import com.example.agenticjobscheduler.execution.JobExecution;
 import com.example.agenticjobscheduler.execution.JobHandler;
+import com.example.agenticjobscheduler.execution.RestPressureAdapter;
 import io.vertx.core.Future;
 import io.vertx.core.Promise;
 import io.vertx.core.Vertx;
 import java.time.Instant;
+import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.logging.Logger;
 
@@ -16,12 +21,23 @@ public final class DemoJobHandler implements JobHandler {
     private static final AtomicInteger PEAK_ACTIVE = new AtomicInteger();
     private static final AtomicInteger COMPLETED = new AtomicInteger();
     private static final AtomicInteger LOAD_COMPLETED = new AtomicInteger();
+    private static final ExternalPressureRegistry PRESSURE_REGISTRY =
+            new ExternalPressureRegistry(List.of("demo-rest", "demo-db"));
 
     record Metrics(int active, int peakActive, int completed, int loadCompleted) { }
 
     @Override
     public Future<Void> execute(JobExecution execution) {
+        return execute(execution, ExternalPressureReporter.NONE);
+    }
+
+    @Override
+    public Future<Void> execute(JobExecution execution, ExternalPressureReporter pressure) {
         boolean fail = execution.job().payload().path("demoFail").asBoolean(false);
+        String externalResponse = execution.job().payload()
+                .path("demoExternalResponse").asText("none");
+        boolean pressureAccepted = reportExternalResponse(
+                externalResponse, pressure);
         int active = ACTIVE.incrementAndGet();
         PEAK_ACTIVE.updateAndGet(peak -> Math.max(peak, active));
         long delayMillis = execution.job().payload().path("demoDelayMillis").asLong(0);
@@ -34,6 +50,8 @@ public final class DemoJobHandler implements JobHandler {
                 + " loadTotal=" + execution.job().payload().path("loadTotal").asText("-")
                 + " loadMode=" + execution.job().payload().path("loadMode").asText("-")
                 + " demoRunId=" + execution.job().payload().path("demoRunId").asText("-")
+                + " externalResponse=" + externalResponse
+                + " externalPressureAccepted=" + pressureAccepted
                 + " demoDelayMillis=" + delayMillis
                 + " activeAtStart=" + active
                 + " peakActive=" + PEAK_ACTIVE.get()
@@ -84,6 +102,23 @@ public final class DemoJobHandler implements JobHandler {
             }
         }
         return promise.future();
+    }
+
+    private static boolean reportExternalResponse(
+            String externalResponse, ExternalPressureReporter pressure) {
+        RestPressureAdapter rest = new RestPressureAdapter(
+                PRESSURE_REGISTRY, pressure, "demo-rest");
+        DatabasePressureAdapter database = new DatabasePressureAdapter(
+                PRESSURE_REGISTRY, pressure, "demo-db");
+        return switch (externalResponse) {
+            case "none" -> false;
+            case "rest-503" -> rest.observeStatus(503);
+            case "rest-timeout" -> rest.observeTimeout(RestPressureAdapter.Timeout.READ);
+            case "database-timeout" ->
+                    database.observeTimeout(DatabasePressureAdapter.Timeout.STATEMENT);
+            default -> throw new IllegalArgumentException(
+                    "Unsupported demo external response " + externalResponse);
+        };
     }
 
     static Metrics metrics() {

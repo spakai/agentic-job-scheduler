@@ -6,7 +6,10 @@ import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.example.agenticjobscheduler.execution.ExternalDependencyClass;
+import com.example.agenticjobscheduler.execution.ExternalPressureCategory;
 import com.example.agenticjobscheduler.execution.JobExecution;
+import com.example.agenticjobscheduler.execution.JobHandler;
 import com.example.agenticjobscheduler.messaging.JobEnvelope;
 import com.example.agenticjobscheduler.messaging.SourceRecord;
 import com.fasterxml.jackson.databind.node.JsonNodeFactory;
@@ -24,6 +27,38 @@ import java.util.concurrent.atomic.AtomicLong;
 import org.junit.jupiter.api.Test;
 
 class ExecutionVerticlePoolTest {
+    @Test
+    void forwardsInvocationPressureReporterToHandler() throws Exception {
+        Vertx vertx = Vertx.vertx();
+        AtomicBoolean reported = new AtomicBoolean();
+        JobHandler handler = new JobHandler() {
+            @Override
+            public Future<Void> execute(JobExecution execution) {
+                return Future.failedFuture("single-argument handler must not be used");
+            }
+
+            @Override
+            public Future<Void> execute(JobExecution execution,
+                                        com.example.agenticjobscheduler.execution.ExternalPressureReporter pressure) {
+                reported.set(pressure.report(
+                        ExternalPressureCategory.UNAVAILABLE,
+                        ExternalDependencyClass.REST,
+                        "catalog"));
+                return Future.succeededFuture();
+            }
+        };
+        ExecutionVerticlePool pool = ExecutionVerticlePool.deploy(vertx, handler, 1)
+                .toCompletionStage().toCompletableFuture().get(10, TimeUnit.SECONDS);
+        try {
+            pool.execute(execution(), (category, dependencyClass, dependencyName) -> true)
+                    .toCompletionStage().toCompletableFuture().get(10, TimeUnit.SECONDS);
+            assertTrue(reported.get());
+        } finally {
+            pool.close().toCompletionStage().toCompletableFuture().get(10, TimeUnit.SECONDS);
+            vertx.close().toCompletionStage().toCompletableFuture().get(10, TimeUnit.SECONDS);
+        }
+    }
+
     @Test
     void executesOnWorkerContextsAndPreservesAsynchronousSettlement() throws Exception {
         Vertx vertx = Vertx.vertx();

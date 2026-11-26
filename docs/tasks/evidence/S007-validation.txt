@@ -1,0 +1,31 @@
+Spec 007 validation
+Date: 2026-11-26
+Branch: docs/spec-007-adaptive-pressure
+Verified base: 3a88581
+
+Focused A08 command:
+mvn -B -ntp -Dtest=ExecutionVerticlePoolTest '-Dit.test=KafkaWorkerIT#externalPressureBlocksReplacementStartsAtReducedMainLimit' verify
+
+Result: passed after correcting the stale per-partition replacement-capacity race.
+Evidence:
+- External pressure observed with zero completed attempts.
+- Adaptive decision reduced the main limit from 4 to 2.
+- Existing four handlers remained active.
+- No replacement started while active usage was 3 or 2.
+- A replacement started after active usage fell below 2.
+- One accepted event and one duplicate-suppressed event were observed.
+- Sensitive URL, host, response, query, and credential sentinels in the job
+  payload were absent from captured pressure and adaptive-decision logs.
+
+Full verification command:
+mvn -B -ntp clean verify
+
+Result:
+- 182 unit tests: 0 failures, 0 errors, 0 skipped.
+- 27 Testcontainers/Kafka integration tests: 0 failures, 0 errors, 0 skipped.
+- Library jar produced at target/agentic-job-scheduler-0.1.0-SNAPSHOT.jar.
+- Maven reports are under target/surefire-reports and target/failsafe-reports.
+
+Remaining:
+- Production REST/database clients remain outside this repository; integrations
+  must use the typed adapter boundary and registered logical dependency labels.

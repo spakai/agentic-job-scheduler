@@ -1,8 +1,9 @@
 # Main-worker adaptive limiter demo
 
 This isolated demo makes the main worker's adaptive concurrency policy
-observable. It runs one main-worker pod through healthy, slow, and recovery
-workloads, then produces a graph and logs for each limiter decision.
+observable. It runs one main-worker pod through healthy, typed external-response,
+slow-latency, and recovery workloads, then produces a graph and logs for each
+limiter decision.
 
 The example complements the [direct-Kafka demo](demo_direct-kafka.md) and
 [HTTP admission demo](demo_http.md): those guides focus on admission and
@@ -11,26 +12,33 @@ measured handler latency.
 
 ## A. What is tested
 
-The runner checks all three phases:
+The default `combined` mode checks all four phases. Select `p95` to run only
+the aggregate-latency path, or `external` to run only the typed external-signal
+path. Warmup and recovery run in every mode.
 
 | Phase | Jobs | Handler hold | Expected limiter behavior |
 | --- | ---: | ---: | --- |
 | Warmup | 1,200 | 500 ms | Increase from the starting limit while backlog exists and p95 is healthy |
+| External responses | 12 | 500 ms | Halve once below the 20-sample floor after mixed REST 503, REST timeout, and DB timeout outcomes |
 | Pressure | 160 | 1,300 ms | Halve the limit repeatedly in qualifying slow windows |
 | Recovery | 1,200 | 500 ms | Increase from the reduced limit while backlog exists and p95 is healthy |
 
-The handler delay is the controlled stand-in for a downstream operation. These
-three values put the healthy phases well below 1,000 ms and the pressure phase
-well above it, leaving room for normal scheduling overhead.
+The handler delay is the controlled stand-in for a downstream operation. The
+external-response phase uses reviewed adapter methods rather than inspecting
+exception text or HTTP bodies. The mixed outcomes are typed as `UNAVAILABLE/REST`,
+`TIMEOUT/REST`, and `TIMEOUT/DATABASE`.
 
 The run succeeds only when:
 
 1. Every phase handles all of its unique load sequences.
 2. Every phase reaches zero main-topic lag.
 3. A warmup window increases the limit with healthy p95.
-4. A pressure window decreases the limit with at least 20 completions and slow
+4. An external-response window decreases the limit with fewer than 20
+   completions and reason `EXTERNAL_PRESSURE`.
+5. A slow-latency pressure window decreases the limit with at least 20
+   completions and slow
    p95.
-5. A recovery window increases the reduced limit with healthy p95.
+6. A recovery window increases the reduced limit with healthy p95.
 
 This tests per-process limiter behavior only. It does not prove a cluster-wide
 budget, global ordering, durable deduplication, external-effect fencing, or
@@ -51,15 +59,19 @@ and [ADR 9](arch.md#adr-9-adaptive-limiter-for-main-token-bucket-for-retry).
 | Evaluation window | 5 seconds |
 | Minimum sample count | 20 completed attempts |
 | Slow-latency trigger | p95 handler latency greater than 1,000 ms |
-| Increase rule | +1 permit when backlog exists and the window is healthy |
+| Increase rule | +1 permit when backlog exists and the window is healthy; after a decrease, two consecutive qualifying windows are required |
 | Decrease rule | Halve, round down, with a minimum of 1 |
+| External-response trigger | Typed REST 503 or REST/DB timeout; bypasses the sample floor |
+| Runtime trigger switches | `WORKER_ADAPTIVE_SLOW_LATENCY_ENABLED` and `WORKER_ADAPTIVE_EXTERNAL_PRESSURE_ENABLED` |
 | Initial- and retained-work bounds | Runner sets retained work to 250 records |
 | Kafka host port | 19092 by default; override with `KAFKA_HOST_PORT` |
 | Random seed | 1202 |
 
 The limit controls admission of new handlers. A decrease does **not** cancel
 running handlers; it prevents new starts until active work is below the new
-limit. Different job IDs may still run concurrently.
+limit. Different job IDs may still run concurrently. The external responses are
+simulated, controlled adapter outcomes, not calls to a deployed REST service or
+database.
 
 ### What p95 means
 
@@ -97,8 +109,8 @@ of that threshold. Actual p95 is slightly above each configured hold because it
 includes handler completion and scheduling overhead. For the recorded run it was
 about 504–540 ms in healthy windows and 1,303–1,304 ms in pressure windows.
 
-Spec 002 describes the one-second target as configurable. In the current code it
-is hard-coded in `AdaptiveLimiter`; changing it requires a code change.
+The target is configurable through `WORKER_ADAPTIVE_TARGET_P95_MILLIS`; the demo
+uses the one-second default.
 
 ## C. Run the demo
 
@@ -113,6 +125,18 @@ To choose a different initial limit:
 ```sh
 INITIAL_LIMIT=12 bash scripts/run-demo-adaptive-limiter.sh
 ```
+
+To isolate one adaptive input:
+
+```sh
+DEMO_MODE=p95 bash scripts/run-demo-adaptive-limiter.sh
+DEMO_MODE=external bash scripts/run-demo-adaptive-limiter.sh
+```
+
+`DEMO_MODE=p95` disables only the external-pressure decision trigger.
+`DEMO_MODE=external` disables only the p95 slow-latency decision trigger. Their
+observations and existing log fields remain available. Use `combined` (the
+default) to demonstrate both in one run.
 
 The runner builds and starts a separate Compose project named
 `adaptive-limiter-demo`; it does not stop or reuse the regular demo stack. The
@@ -131,21 +155,22 @@ you intentionally want to discard its Kafka backlog and offsets.
 
 ![Main-worker adaptive limiter decrease and recovery](docs/diagrams/demo-adaptive-limiter.svg)
 
-The recorded run began at 16 permits:
+The recorded external-response run began at 16 permits:
 
 | Evidence | Observation |
 | --- | --- |
-| Warmup | 16 → 17 at p95 540 ms with 64 completions |
-| Pressure | 22 → 11 at p95 1,303 ms with 66 completions |
-| Further pressure windows | 11 → 5 → 2 |
-| Recovery | 2 → 3 at p95 504 ms with 20 completions |
-| Phase completion | 1,200 warmup, 160 pressure, and 1,200 recovery handlers; zero final lag in each phase |
+| Warmup | 16 → 17 at p95 512 ms with 96 completions |
+| External responses | 21 → 10 with 12 completions and reason `EXTERNAL_PRESSURE` |
+| External outcomes | REST 503, REST read timeout, and database statement timeout observed |
+| Slow pressure | 10 → 5 at p95 1,303 ms with 20 completions; later windows reached 2 |
+| Recovery | 2 → 3 at p95 503 ms with 20 completions |
+| Phase completion | 1,200 warmup, 12 external, 160 slow, and 1,200 recovery handlers; zero final lag in each phase |
 
 The increasing healthy windows are deliberately gradual: one qualifying window
 adds at most one permit. A slow qualifying window has a stronger response:
-halving the current limit. Windows with fewer than 20 attempts normally hold the
-limit, which is why small completion counts are visible in the log without a
-change.
+halving the current limit. Ordinary aggregate windows with fewer than 20
+attempts normally hold the limit. Typed external pressure is the intentional
+exception and can halve once in the current window.
 
 ## E. Evidence
 

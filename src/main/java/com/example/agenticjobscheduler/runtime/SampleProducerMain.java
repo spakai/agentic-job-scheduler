@@ -294,18 +294,35 @@ public final class SampleProducerMain {
                         "DEMO_HANDLER_DELAY_MILLIS", "100"));
         String demoRunId = System.getenv().getOrDefault(
                 "DEMO_RUN_ID", UUID.randomUUID().toString());
+        String externalResponse = externalResponse(sequence, System.getenv().getOrDefault(
+                "DEMO_EXTERNAL_RESPONSE", "none"));
         var payload = JsonNodeFactory.instance.objectNode()
                 .put("message", "hello from the sample producer")
                 .put("loadSequence", sequence)
                 .put("loadTotal", total)
                 .put("loadMode", fail ? "failure" : "success")
                 .put("demoRunId", demoRunId)
-                .put("demoDelayMillis", demoDelayMillis);
+                .put("demoDelayMillis", demoDelayMillis)
+                .put("demoExternalResponse", externalResponse);
         if (fail) {
             payload.put("demoFail", true);
         }
         return new JobEnvelope(1, UUID.randomUUID(), UUID.randomUUID(),
                 "demo.echo", payload, 1);
+    }
+
+    static String externalResponse(int sequence, String configured) {
+        return switch (configured) {
+            case "none" -> "none";
+            case "rest-503", "rest-timeout", "database-timeout" -> configured;
+            case "mixed" -> switch (Math.floorMod(sequence - 1, 3)) {
+                case 0 -> "rest-503";
+                case 1 -> "rest-timeout";
+                default -> "database-timeout";
+            };
+            default -> throw new IllegalArgumentException(
+                    "Unsupported DEMO_EXTERNAL_RESPONSE " + configured);
+        };
     }
 
     static UUID jobIdForPartition(int expectedPartition, int partitionCount) {

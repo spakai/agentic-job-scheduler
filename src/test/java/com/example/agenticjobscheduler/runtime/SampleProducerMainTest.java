@@ -26,6 +26,16 @@ class SampleProducerMainTest {
     }
 
     @Test
+    void externalResponseModesAreValidatedAndMixedDeterministically() {
+        assertEquals("rest-503", SampleProducerMain.externalResponse(1, "mixed"));
+        assertEquals("rest-timeout", SampleProducerMain.externalResponse(2, "mixed"));
+        assertEquals("database-timeout", SampleProducerMain.externalResponse(3, "mixed"));
+        assertEquals("none", SampleProducerMain.externalResponse(1, "none"));
+        assertThrows(IllegalArgumentException.class,
+                () -> SampleProducerMain.externalResponse(1, "http-500"));
+    }
+
+    @Test
     void randomizedPartitionCountsRetain1200TotalWithoutFixedPerPartitionCounts() {
         int[] counts = new int[SampleProducerMain.DEMO_PARTITION_COUNT];
         Random random = new Random(1200);

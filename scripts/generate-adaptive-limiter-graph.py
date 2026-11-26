@@ -12,12 +12,20 @@ WINDOW = re.compile(
     r"p95HandlerMillis=(\d+).*?"
     r"transientFailureRate=([0-9.]+).*?"
     r"backlogPresent=(true|false).*?"
+    r"externalPressure=(true|false).*?"
+    r"handlerTimeout=(true|false).*?"
+    r"(?:slowLatencyEnabled=(true|false).*?"
+    r"externalPressureEnabled=(true|false).*?)?"
+    r"reason=([A-Z_]+).*?"
+    r"qualifyingHealthyWindows=(\d+).*?"
+    r"minimumClamp=(true|false).*?"
     r"limitBefore=(\d+).*?"
     r"limitAfter=(\d+)"
 )
 HANDLER = re.compile(
     r"timestamp=([0-9TZ:.-]+).*?loadMode=success.*?"
-    r"demoRunId=(\S+).*?activeAtStart=(\d+)"
+    r"demoRunId=(\S+).*?externalResponse=(\S+).*?"
+    r"externalPressureAccepted=(true|false).*?activeAtStart=(\d+)"
 )
 
 
@@ -33,13 +41,23 @@ windows = []
 for line in window_file.read_text().splitlines():
     match = WINDOW.search(line)
     if match:
-        epoch, completed, p95, failure_rate, backlog, before, after = match.groups()
+        (epoch, completed, p95, failure_rate, backlog, external_pressure,
+         handler_timeout, slow_latency_enabled, external_pressure_enabled,
+         reason, healthy_windows, minimum_clamp, before,
+         after) = match.groups()
         windows.append({
             "epoch": int(epoch),
             "completed": int(completed),
             "p95": int(p95),
             "failure_rate": float(failure_rate),
             "backlog": backlog == "true",
+            "external_pressure": external_pressure == "true",
+            "handler_timeout": handler_timeout == "true",
+            "slow_latency_enabled": slow_latency_enabled != "false",
+            "external_pressure_enabled": external_pressure_enabled != "false",
+            "reason": reason,
+            "healthy_windows": int(healthy_windows),
+            "minimum_clamp": minimum_clamp == "true",
             "before": int(before),
             "after": int(after),
         })
@@ -58,8 +76,15 @@ for line in phase_file.read_text().splitlines()[1:]:
         "delay": int(delay),
     })
 
-if not windows or len(phases) != 3:
-    fail("Expected adaptive-window evidence and exactly three completed phases")
+phase_names = {phase["name"] for phase in phases}
+expected_phase_names = {"warmup", "recovery"}
+if "external-responses" in phase_names:
+    expected_phase_names.add("external-responses")
+if "pressure" in phase_names:
+    expected_phase_names.add("pressure")
+if (not windows or phase_names != expected_phase_names
+        or not ({"external-responses", "pressure"} & phase_names)):
+    fail("Expected warmup/recovery plus external-responses, pressure, or both")
 if any(phase["records"] != phase["unique_handlers"] or phase["lag_rows"] != 0
        for phase in phases):
     fail("Every phase must have all unique handlers complete and zero final lag")
@@ -81,28 +106,48 @@ def qualifying(phase, predicate):
 
 warmup_rises = qualifying("warmup", lambda window:
                           window["p95"] <= 1000 and window["after"] > window["before"])
+external_falls = [
+    window for window in windows
+    if window["phase"] == "external-responses"
+    and window["external_pressure"]
+    and window["external_pressure_enabled"]
+    and window["reason"] == "EXTERNAL_PRESSURE"
+    and window["completed"] < 20
+    and window["after"] < window["before"]
+]
 pressure_falls = qualifying("pressure", lambda window:
-                            window["p95"] > 1000 and window["after"] < window["before"])
+                            window["slow_latency_enabled"]
+                            and window["p95"] > 1000
+                            and window["reason"] == "HIGH_LATENCY"
+                            and window["after"] < window["before"])
 recovery_rises = qualifying("recovery", lambda window:
                             window["p95"] <= 1000 and window["after"] > window["before"])
 if not warmup_rises:
     fail("Warmup did not show a healthy, backlog-driven limit increase")
-if not pressure_falls:
+if "external-responses" in phase_names and not external_falls:
+    fail("External responses did not bypass the sample floor with a typed pressure decrease")
+if "pressure" in phase_names and not pressure_falls:
     fail("Pressure did not show a >=20-sample slow-window limit decrease")
 if not recovery_rises:
     fail("Recovery did not show a healthy, backlog-driven limit increase")
 
 handler_points = []
+external_outcomes = set()
 run_to_phase = {phase["run_id"]: phase["name"] for phase in phases}
 for line in handler_file.read_text().splitlines():
     match = HANDLER.search(line)
     if match:
-        timestamp, run_id, active = match.groups()
+        timestamp, run_id, external_response, accepted, active = match.groups()
         if run_id in run_to_phase:
             epoch = int(datetime.fromisoformat(timestamp.replace("Z", "+00:00")).timestamp() * 1000)
             handler_points.append((epoch, int(active)))
+            if run_to_phase[run_id] == "external-responses" and accepted == "true":
+                external_outcomes.add(external_response)
 if not handler_points:
     fail("No matching handler-start concurrency measurements found")
+expected_external_outcomes = {"rest-503", "rest-timeout", "database-timeout"}
+if "external-responses" in phase_names and external_outcomes != expected_external_outcomes:
+    fail("External-response phase did not emit all reviewed REST/DB outcomes")
 
 start = min(phase["start"] for phase in phases)
 end = max(phase["end"] for phase in phases)
@@ -125,16 +170,29 @@ def y(value, panel, maximum):
     top, bottom = panel
     return bottom - value * (bottom - top) / maximum
 
+signal_description = (
+    "aggregate and external pressure" if phase_names == {
+        "warmup", "external-responses", "pressure", "recovery"
+    } else "typed external pressure" if "external-responses" in phase_names
+    else "aggregate p95 pressure"
+)
 svg = [
     '<svg xmlns="http://www.w3.org/2000/svg" width="1500" height="1000" viewBox="0 0 1500 1000">',
     '<rect width="1500" height="1000" fill="#f8fafc"/>',
     '<style>.title{font:700 30px sans-serif;fill:#0f172a}.sub{font:17px sans-serif;fill:#475569}',
     '.label{font:700 18px sans-serif;fill:#334155}.tick{font:13px sans-serif;fill:#64748b}',
     '.phase{font:700 14px sans-serif;fill:#334155}</style>',
-    '<text x="70" y="55" class="title">Main-worker adaptive concurrency: decrease and recovery</text>',
-    '<text x="70" y="85" class="sub">Five-second windows; limiter changes only affect new handler starts.</text>',
+    '<text x="70" y="55" class="title">Main-worker adaptive concurrency: {}</text>'.format(
+        signal_description
+    ),
+    '<text x="70" y="85" class="sub">Five-second windows; typed external signals bypass the 20-sample floor.</text>',
 ]
-phase_colors = {"warmup": "#dcfce7", "pressure": "#fee2e2", "recovery": "#dbeafe"}
+phase_colors = {
+    "warmup": "#dcfce7",
+    "external-responses": "#fef3c7",
+    "pressure": "#fee2e2",
+    "recovery": "#dbeafe",
+}
 for phase in phases:
     px = x(phase["start"])
     pw = max(1, x(phase["end"]) - px)
@@ -228,10 +286,19 @@ summary_lines = [
         warmup_rises[0]["before"], warmup_rises[0]["after"],
         warmup_rises[0]["p95"], warmup_rises[0]["completed"]
     ),
-    "Pressure decrease: {} -> {} at p95={} ms, completed={}.".format(
-        pressure_falls[0]["before"], pressure_falls[0]["after"],
-        pressure_falls[0]["p95"], pressure_falls[0]["completed"]
-    ),
+    *([
+        "Pressure decrease: {} -> {} at p95={} ms, completed={}.".format(
+            pressure_falls[0]["before"], pressure_falls[0]["after"],
+            pressure_falls[0]["p95"], pressure_falls[0]["completed"]
+        )
+    ] if pressure_falls else []),
+    *([
+        "External-response decrease: {} -> {} at completed={} (<20), reason={}.".format(
+            external_falls[0]["before"], external_falls[0]["after"],
+            external_falls[0]["completed"], external_falls[0]["reason"]
+        ),
+        "External outcomes observed: {}.".format(", ".join(sorted(external_outcomes))),
+    ] if external_falls else []),
     "Recovery increase: {} -> {} at p95={} ms, completed={}.".format(
         recovery_rises[0]["before"], recovery_rises[0]["after"],
         recovery_rises[0]["p95"], recovery_rises[0]["completed"]

@@ -1,6 +1,8 @@
 package com.example.agenticjobscheduler.runtime;
 
 import com.example.agenticjobscheduler.execution.JobExecution;
+import com.example.agenticjobscheduler.execution.ExternalDependencyClass;
+import com.example.agenticjobscheduler.execution.ExternalPressureCategory;
 import com.example.agenticjobscheduler.messaging.JobEnvelope;
 import com.example.agenticjobscheduler.messaging.SourceRecord;
 import com.fasterxml.jackson.databind.node.JsonNodeFactory;
@@ -58,6 +60,38 @@ class DemoJobHandlerTest {
         assertTrue(result.failed());
         assertEquals("DEMO_FAILURE", result.cause().getMessage());
         assertEquals(3, execution.job().remainingAttempts());
+    }
+
+    @Test
+    void reviewedExternalResponsesEmitTypedPressureWithoutFailingTheJob() {
+        var reports = new java.util.ArrayList<String>();
+        var handler = new DemoJobHandler();
+        for (String response : java.util.List.of(
+                "rest-503", "rest-timeout", "database-timeout")) {
+            var payload = JsonNodeFactory.instance.objectNode()
+                    .put("demoExternalResponse", response);
+            var execution = new JobExecution(
+                    new SourceRecord("jobs.main.v1", 0, 0),
+                    new JobEnvelope(1, UUID.randomUUID(), UUID.randomUUID(),
+                            "demo.echo", payload, 3),
+                    1);
+            var result = handler.execute(
+                    execution,
+                    (category, dependencyClass, dependencyName) -> {
+                        reports.add(category + "/" + dependencyClass + "/" + dependencyName);
+                        return true;
+                    });
+            assertTrue(result.succeeded());
+        }
+
+        assertEquals(java.util.List.of(
+                        ExternalPressureCategory.UNAVAILABLE + "/"
+                                + ExternalDependencyClass.REST + "/demo-rest",
+                        ExternalPressureCategory.TIMEOUT + "/"
+                                + ExternalDependencyClass.REST + "/demo-rest",
+                        ExternalPressureCategory.TIMEOUT + "/"
+                                + ExternalDependencyClass.DATABASE + "/demo-db"),
+                reports);
     }
 
     private static JobExecution execution(boolean fail) {

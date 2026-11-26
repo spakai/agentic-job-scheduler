@@ -9,8 +9,13 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import com.example.agenticjobscheduler.messaging.EnvelopeValidator;
 import com.example.agenticjobscheduler.messaging.JobEnvelope;
 import com.example.agenticjobscheduler.messaging.SourceRecord;
-import com.example.agenticjobscheduler.execution.ProcessingWindow;
+import com.example.agenticjobscheduler.execution.ExternalDependencyClass;
+import com.example.agenticjobscheduler.execution.ExternalPressureCategory;
+import com.example.agenticjobscheduler.execution.ExternalPressureRegistry;
+import com.example.agenticjobscheduler.execution.ExternalPressureReporter;
 import com.example.agenticjobscheduler.execution.JobExecution;
+import com.example.agenticjobscheduler.execution.JobHandler;
+import com.example.agenticjobscheduler.execution.ProcessingWindow;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.JsonNodeFactory;
@@ -28,12 +33,16 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.logging.Handler;
+import java.util.logging.LogRecord;
+import java.util.logging.Logger;
 import org.apache.kafka.clients.admin.AdminClient;
 import org.apache.kafka.clients.admin.AlterConfigOp;
 import org.apache.kafka.clients.admin.ConfigEntry;
@@ -62,6 +71,100 @@ class KafkaWorkerIT {
     @Container
     private final KafkaContainer KAFKA =
             new KafkaContainer(DockerImageName.parse("apache/kafka-native:3.8.0"));
+
+    /** A08: pressure with zero completed attempts lowers capacity without cancelling active work. */
+    @Test
+    void externalPressureBlocksReplacementStartsAtReducedMainLimit() throws Exception {
+        String bootstrap = KAFKA.getBootstrapServers();
+        TopicProvisioner.ensureTopics(bootstrap, 3);
+
+        AtomicInteger starts = new AtomicInteger();
+        AtomicBoolean draining = new AtomicBoolean();
+        ConcurrentLinkedQueue<Promise<Void>> gates = new ConcurrentLinkedQueue<>();
+        JobHandler handler = new JobHandler() {
+            @Override
+            public Future<Void> execute(JobExecution execution) {
+                return execute(execution, ExternalPressureReporter.NONE);
+            }
+
+            @Override
+            public Future<Void> execute(JobExecution execution, ExternalPressureReporter pressure) {
+                if (draining.get()) {
+                    return Future.succeededFuture();
+                }
+                Promise<Void> gate = Promise.promise();
+                gates.add(gate);
+                if (starts.incrementAndGet() == 1) {
+                    assertTrue(pressure.report(
+                            ExternalPressureCategory.UNAVAILABLE,
+                            ExternalDependencyClass.REST,
+                            "catalog"));
+                    assertFalse(pressure.report(
+                            ExternalPressureCategory.UNAVAILABLE,
+                            ExternalDependencyClass.REST,
+                            "catalog"));
+                }
+                return gate.future();
+            }
+        };
+        Vertx vertx = Vertx.vertx();
+        RecordingLogHandler logs = new RecordingLogHandler();
+        Logger workerLog = Logger.getLogger(KafkaWorker.class.getName());
+        workerLog.addHandler(logs);
+        KafkaWorker main = new KafkaWorker(
+                vertx,
+                new WorkerConfig(bootstrap, WorkerRole.MAIN, 4, 3),
+                handler,
+                new ExternalPressureRegistry(List.of("catalog")));
+        try {
+            main.start().toCompletionStage().toCompletableFuture().get(30, TimeUnit.SECONDS);
+            try (KafkaProducer<byte[], byte[]> producer =
+                         new KafkaProducer<>(producerProperties(bootstrap))) {
+                for (int index = 0; index < 12; index++) {
+                    UUID jobId = UUID.randomUUID();
+                    producer.send(new ProducerRecord<>(TopicProvisioner.MAIN_TOPIC,
+                            JobRecordEncoder.key(jobId),
+                            JobRecordEncoder.main(sensitiveJob(jobId))))
+                            .get(10, TimeUnit.SECONDS);
+                }
+            }
+
+            awaitAtLeast(starts, 4, 20);
+            Thread.sleep(5_750);
+            Promise<Void> first = gates.remove();
+            first.tryComplete();
+            Thread.sleep(500);
+            assertEquals(4, starts.get(), "active use above the reduced limit must block replacement");
+            KafkaWorker.PressureMetrics metrics = main.pressureMetrics();
+            assertEquals(1, metrics.acceptedEvents().size());
+            assertEquals(1L, metrics.acceptedEvents().values().iterator().next());
+            assertEquals(1, metrics.duplicateSuppressed());
+            String pressureLogs = logs.messages().stream()
+                    .filter(message -> message.startsWith("External pressure")
+                            || message.startsWith("Adaptive limiter window"))
+                    .reduce("", (left, right) -> left + "\n" + right);
+            for (String prohibited : List.of(
+                    "https://internal.example", "db.internal", "SENSITIVE_BODY",
+                    "SENSITIVE_QUERY", "SENSITIVE_CREDENTIAL")) {
+                assertFalse(pressureLogs.contains(prohibited),
+                        "pressure observability must omit sensitive payload values");
+            }
+
+            Promise<Void> second = gates.remove();
+            second.tryComplete();
+            Thread.sleep(500);
+            assertEquals(4, starts.get(), "active use equal to the reduced limit must block replacement");
+
+            gates.remove().tryComplete();
+            awaitAtLeast(starts, 5, 10);
+        } finally {
+            draining.set(true);
+            gates.forEach(gate -> gate.tryComplete());
+            main.close().toCompletionStage().toCompletableFuture().get(35, TimeUnit.SECONDS);
+            workerLog.removeHandler(logs);
+            vertx.close().toCompletionStage().toCompletableFuture().get(10, TimeUnit.SECONDS);
+        }
+    }
 
     @Test
     void consumerVerticleOwnsMultiplePartitionsAndDispatchesSafely() throws Exception {
@@ -1561,6 +1664,38 @@ class KafkaWorkerIT {
     private static JobEnvelope job(UUID id, int remainingAttempts) {
         return new JobEnvelope(1, id, UUID.randomUUID(), "demo.echo",
                 JsonNodeFactory.instance.objectNode().put("message", "safe demo"), remainingAttempts);
+    }
+
+    private static JobEnvelope sensitiveJob(UUID id) {
+        return new JobEnvelope(1, id, UUID.randomUUID(), "demo.echo",
+                JsonNodeFactory.instance.objectNode()
+                        .put("url", "https://internal.example/secret")
+                        .put("host", "db.internal")
+                        .put("response", "SENSITIVE_BODY")
+                        .put("query", "SENSITIVE_QUERY")
+                        .put("credential", "SENSITIVE_CREDENTIAL"),
+                3);
+    }
+
+    private static final class RecordingLogHandler extends Handler {
+        private final CopyOnWriteArrayList<String> messages = new CopyOnWriteArrayList<>();
+
+        @Override
+        public void publish(LogRecord record) {
+            if (isLoggable(record) && record.getMessage() != null) {
+                messages.add(record.getMessage());
+            }
+        }
+
+        @Override
+        public void flush() { }
+
+        @Override
+        public void close() { }
+
+        private List<String> messages() {
+            return List.copyOf(messages);
+        }
     }
 
     private static int partition(byte[] key, int partitions) {

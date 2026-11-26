@@ -1,9 +1,14 @@
 package com.example.agenticjobscheduler.runtime;
 
 import com.example.agenticjobscheduler.execution.AdaptiveLimiter;
+import com.example.agenticjobscheduler.execution.ExternalDependencyClass;
+import com.example.agenticjobscheduler.execution.ExternalPressureCategory;
+import com.example.agenticjobscheduler.execution.ExternalPressureEvent;
+import com.example.agenticjobscheduler.execution.ExternalPressureRegistry;
 import com.example.agenticjobscheduler.execution.FailureClassifier;
 import com.example.agenticjobscheduler.execution.HandlerCancellation;
 import com.example.agenticjobscheduler.execution.ImmediateJobDispatcher;
+import com.example.agenticjobscheduler.execution.InvocationPressureReporter;
 import com.example.agenticjobscheduler.execution.JobExecution;
 import com.example.agenticjobscheduler.execution.JobHandler;
 import com.example.agenticjobscheduler.execution.OffsetCommitTracker;
@@ -36,6 +41,7 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.TreeMap;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
@@ -75,6 +81,11 @@ public final class KafkaWorker {
     private final EnvelopeValidator validator = new EnvelopeValidator(Set.of("demo.echo"));
     private final ProcessingWindow window;
     private final AdaptiveLimiter mainLimiter;
+    private final ExternalPressureRegistry pressureRegistry;
+    private final Map<PressureMetricKey, Long> acceptedPressureEvents =
+            new ConcurrentHashMap<>();
+    private final AtomicLong duplicatePressureEvents = new AtomicLong();
+    private final AtomicLong minimumClampDecisions = new AtomicLong();
     private final ArrayDeque<CommitRequest> commitQueue = new ArrayDeque<>();
     private final Map<TopicPartition, PartitionOwner> owners = new HashMap<>();
     private final List<Long> handlerLatencies = new ArrayList<>();
@@ -96,13 +107,25 @@ public final class KafkaWorker {
     private long shutdownTimerId = -1;
     private int completedAttempts;
     private int failedAttempts;
+    private boolean externalPressure;
+    private boolean handlerTimeoutPressure;
 
     public KafkaWorker(Vertx vertx, WorkerConfig config, JobHandler handler) {
         this(vertx, config, handler, new ProcessingWindow(
                 config.maxRetainedRecords(), config.maxRetainedBytes(),
                 MAX_FETCH_RECORDS, MAX_FETCH_BYTES),
             DEFAULT_SHUTDOWN_TIMEOUT_MILLIS, DEFAULT_HANDLER_TIMEOUT_MILLIS,
-            DEFAULT_CANCELLATION_REPORT_MILLIS);
+            DEFAULT_CANCELLATION_REPORT_MILLIS,
+            new ExternalPressureRegistry(config.pressureDependencyNames()));
+    }
+
+    public KafkaWorker(Vertx vertx, WorkerConfig config, JobHandler handler,
+                       ExternalPressureRegistry pressureRegistry) {
+        this(vertx, config, handler, new ProcessingWindow(
+                        config.maxRetainedRecords(), config.maxRetainedBytes(),
+                        MAX_FETCH_RECORDS, MAX_FETCH_BYTES),
+                DEFAULT_SHUTDOWN_TIMEOUT_MILLIS, DEFAULT_HANDLER_TIMEOUT_MILLIS,
+                DEFAULT_CANCELLATION_REPORT_MILLIS, pressureRegistry);
     }
 
     KafkaWorker(Vertx vertx, WorkerConfig config, JobHandler handler, ProcessingWindow window) {
@@ -117,18 +140,31 @@ public final class KafkaWorker {
 
     KafkaWorker(Vertx vertx, WorkerConfig config, JobHandler handler, ProcessingWindow window,
                 long shutdownTimeoutMillis, long handlerTimeoutMillis, long cancellationReportMillis) {
+        this(vertx, config, handler, window, shutdownTimeoutMillis, handlerTimeoutMillis,
+                cancellationReportMillis,
+                new ExternalPressureRegistry(config.pressureDependencyNames()));
+    }
+
+    KafkaWorker(Vertx vertx, WorkerConfig config, JobHandler handler, ProcessingWindow window,
+                long shutdownTimeoutMillis, long handlerTimeoutMillis, long cancellationReportMillis,
+                ExternalPressureRegistry pressureRegistry) {
         this.vertx = Objects.requireNonNull(vertx, "vertx");
         this.config = Objects.requireNonNull(config, "config");
         this.handler = Objects.requireNonNull(handler, "handler");
         this.window = Objects.requireNonNull(window, "window");
+        this.pressureRegistry = Objects.requireNonNull(pressureRegistry, "pressureRegistry");
         if (shutdownTimeoutMillis < 1 || handlerTimeoutMillis < 1 || cancellationReportMillis < 1) {
             throw new IllegalArgumentException("Worker timeouts must be positive");
         }
         this.shutdownTimeoutMillis = shutdownTimeoutMillis;
         this.handlerTimeoutMillis = handlerTimeoutMillis;
         this.cancellationReportMillis = cancellationReportMillis;
-        this.mainLimiter = new AdaptiveLimiter(1, 128, config.role() == WorkerRole.MAIN
-                ? config.concurrency() : 16);
+        this.mainLimiter = new AdaptiveLimiter(
+                config.adaptiveLimiterPolicy().minimum(),
+                config.adaptiveLimiterPolicy().maximum(),
+                config.role() == WorkerRole.MAIN
+                        ? config.concurrency() : config.adaptiveLimiterPolicy().minimum(),
+                config.adaptiveLimiterPolicy());
         this.retryRateGate = new RateGate(
                 vertx, config.retryStartsPerSecond(), config.concurrency());
     }
@@ -184,7 +220,7 @@ public final class KafkaWorker {
                         failWorker("Could not initialize Kafka worker", result.cause());
                         return;
                     }
-                    periodicId = vertx.setPeriodic(5_000, ignoredTick ->
+                    periodicId = vertx.setPeriodic(mainLimiter.evaluationPeriodMillis(), ignoredTick ->
                             context.runOnContext(ignoredContext -> evaluateMainLimit()));
                     started.tryComplete();
                     pollNext();
@@ -662,13 +698,21 @@ public final class KafkaWorker {
                     + (p95Nanos % 1_000_000 == 0 ? 0 : 1);
             failureRate = (double) failedAttempts / sampleCount;
         }
-        int updated = mainLimiter.applyWindow(
+        boolean observedExternalPressure = externalPressure;
+        boolean observedHandlerTimeout = handlerTimeoutPressure;
+        AdaptiveLimiter.WindowDecision decision = mainLimiter.applyWindowDecision(
                 backlogPresent,
                 p95Millis, failureRate,
-                false, false, sampleCount);
+                false, observedHandlerTimeout, sampleCount, observedExternalPressure);
+        int updated = decision.limitAfter();
+        if (decision.minimumClamp()) {
+            minimumClampDecisions.incrementAndGet();
+        }
         completedAttempts = 0;
         failedAttempts = 0;
         handlerLatencies.clear();
+        externalPressure = false;
+        handlerTimeoutPressure = false;
         if (updated != mainLimiter.currentLimit()) {
             throw new IllegalStateException("Adaptive limiter returned an inconsistent limit");
         }
@@ -678,6 +722,15 @@ public final class KafkaWorker {
                 + " p95HandlerMillis=" + p95Millis
                 + " transientFailureRate=" + failureRate
                 + " backlogPresent=" + backlogPresent
+                + " externalPressure=" + observedExternalPressure
+                + " handlerTimeout=" + observedHandlerTimeout
+                + " slowLatencyEnabled="
+                + config.adaptiveLimiterPolicy().slowLatencyEnabled()
+                + " externalPressureEnabled="
+                + config.adaptiveLimiterPolicy().externalPressureEnabled()
+                + " reason=" + decision.reason()
+                + " qualifyingHealthyWindows=" + decision.qualifyingHealthyWindows()
+                + " minimumClamp=" + decision.minimumClamp()
                 + " limitBefore=" + limitBefore
                 + " limitAfter=" + updated);
         resizeDispatchers();
@@ -723,16 +776,19 @@ public final class KafkaWorker {
                                                    AtomicLong startedAt) {
         Future<Void> handlerCompletion;
         Future<Long> handlerStarted;
+        InvocationPressureReporter pressure = new InvocationPressureReporter(
+                pressureRegistry, execution, this::observeExternalPressure);
         try {
             if (handler instanceof ExecutionVerticlePool pool) {
-                var dispatch = pool.dispatch(execution, owner.active::get, startedAt);
+                var dispatch = pool.dispatch(
+                        execution, owner.active::get, startedAt, pressure);
                 handlerStarted = dispatch.started();
                 handlerCompletion = dispatch.completion();
             } else {
                 long now = System.nanoTime();
                 startedAt.set(now);
                 handlerStarted = Future.succeededFuture(now);
-                handlerCompletion = handler.execute(execution);
+                handlerCompletion = handler.execute(execution, pressure);
             }
         } catch (RuntimeException failure) {
             return Future.failedFuture(failure);
@@ -757,6 +813,9 @@ public final class KafkaWorker {
                         return;
                     }
                     timedOut[0] = true;
+                    if (config.role() == WorkerRole.MAIN) {
+                        handlerTimeoutPressure = true;
+                    }
                     execution.cancellation().requestCancellation();
                     LOG.log(Level.WARNING, "Handler timed out; cancellation requested for job {0}",
                             execution.job().jobId());
@@ -771,6 +830,7 @@ public final class KafkaWorker {
                 }));
         }));
         handlerCompletion.onComplete(result -> context.runOnContext(ignoredContext -> {
+            duplicatePressureEvents.addAndGet(pressure.duplicateSuppressedCount());
             if (timeoutTimer[0] != -1) {
                 vertx.cancelTimer(timeoutTimer[0]);
             }
@@ -786,6 +846,29 @@ public final class KafkaWorker {
             }
         }));
         return settled.future();
+    }
+
+    private void observeExternalPressure(ExternalPressureEvent event) {
+        if (config.role() != WorkerRole.MAIN) {
+            return;
+        }
+        context.runOnContext(ignored -> {
+            externalPressure = true;
+            PressureMetricKey key = new PressureMetricKey(
+                    event.dependencyClass(), event.dependencyName(), event.category());
+            acceptedPressureEvents.merge(key, 1L, Long::sum);
+            LOG.info("External pressure observed"
+                    + " dependencyClass=" + event.dependencyClass()
+                    + " dependency=" + event.dependencyName()
+                    + " category=" + event.category());
+        });
+    }
+
+    public PressureMetrics pressureMetrics() {
+        return new PressureMetrics(
+                Map.copyOf(acceptedPressureEvents),
+                duplicatePressureEvents.get(),
+                minimumClampDecisions.get());
     }
 
     private static long batchBytes(KafkaConsumerRecords<byte[], byte[]> batch) {
@@ -936,6 +1019,7 @@ public final class KafkaWorker {
             dispatcher = new ImmediateJobDispatcher(context, partition.getTopic(),
                     Set.of(partition.getPartition()), 1, MAX_RETAINED_RECORDS,
                     execution -> KafkaWorker.this.executeHandler(this, execution));
+            dispatcher.beforeReplacementDispatch(KafkaWorker.this::resizeDispatchers);
             dispatcher.setCapacity(0);
         }
     }
@@ -970,6 +1054,16 @@ public final class KafkaWorker {
             super("HANDLER_TIMEOUT");
         }
     }
+
+    public record PressureMetricKey(
+            ExternalDependencyClass dependencyClass,
+            String dependencyName,
+            ExternalPressureCategory category) { }
+
+    public record PressureMetrics(
+            Map<PressureMetricKey, Long> acceptedEvents,
+            long duplicateSuppressed,
+            long minimumClampDecisions) { }
 
     private static final class RateGate {
         private final Vertx vertx;

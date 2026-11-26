@@ -16,4 +16,12 @@ import io.vertx.core.Future;
 @FunctionalInterface
 public interface JobHandler {
     Future<Void> execute(JobExecution execution);
+
+    /**
+     * Executes a handler with a reporter for explicit, typed external pressure.
+     * Existing handlers need no change and retain the original contract.
+     */
+    default Future<Void> execute(JobExecution execution, ExternalPressureReporter pressure) {
+        return execute(execution);
+    }
 }

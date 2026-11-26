@@ -3,6 +3,7 @@ set -euo pipefail
 
 PROJECT_NAME="adaptive-limiter-demo"
 INITIAL_LIMIT="${INITIAL_LIMIT:-16}"
+DEMO_MODE="${DEMO_MODE:-combined}"
 MAX_WAIT_SECONDS="${MAX_WAIT_SECONDS:-240}"
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PHASE_FILE="${PROJECT_ROOT}/docs/tasks/evidence/DEMO1202-adaptive-limiter-phases.tsv"
@@ -20,6 +21,24 @@ export MAIN_WORKER_A_CONCURRENCY="$INITIAL_LIMIT"
 export MAIN_WORKER_B_CONCURRENCY=8
 export WORKER_MAX_RETAINED_RECORDS=250
 export DEMO_RANDOM_SEED=1202
+case "$DEMO_MODE" in
+    combined)
+        export WORKER_ADAPTIVE_SLOW_LATENCY_ENABLED=true
+        export WORKER_ADAPTIVE_EXTERNAL_PRESSURE_ENABLED=true
+        ;;
+    p95)
+        export WORKER_ADAPTIVE_SLOW_LATENCY_ENABLED=true
+        export WORKER_ADAPTIVE_EXTERNAL_PRESSURE_ENABLED=false
+        ;;
+    external)
+        export WORKER_ADAPTIVE_SLOW_LATENCY_ENABLED=false
+        export WORKER_ADAPTIVE_EXTERNAL_PRESSURE_ENABLED=true
+        ;;
+    *)
+        echo "DEMO_MODE must be combined, p95, or external" >&2
+        exit 2
+        ;;
+esac
 compose=(docker compose --project-name "$PROJECT_NAME")
 
 if (( INITIAL_LIMIT < 8 || INITIAL_LIMIT > 24 )); then
@@ -46,11 +65,14 @@ run_phase() {
     local deadline
     local handled
     local lag_rows
+    local external_ready
+    local external_response="${4:-none}"
 
     start_ms="$(date +%s%3N)"
     export DEMO_RUN_ID="$run_id"
     export DEMO_HANDLER_DELAY_MILLIS="$delay_ms"
-    echo "Starting phase=$phase records=$records handlerDelayMillis=$delay_ms runId=$run_id"
+    export DEMO_EXTERNAL_RESPONSE="$external_response"
+    echo "Starting phase=$phase records=$records handlerDelayMillis=$delay_ms externalResponse=$external_response runId=$run_id"
     "${compose[@]}" --profile tools run --rm sample-producer --load-count "$records"
 
     deadline=$((SECONDS + MAX_WAIT_SECONDS))
@@ -65,13 +87,29 @@ run_phase() {
             --bootstrap-server localhost:9092 \
             --describe --group job-main-v1 2>/dev/null \
             | awk '$1 == "job-main-v1" && $6 != "0" { count++ } END { print count+0 }')"
-        if (( handled == records && lag_rows == 0 )); then
+        external_ready=0
+        if [[ "$external_response" == "none" ]]; then
+            external_ready=1
+        elif awk -v start="$start_ms" '
+            /Adaptive limiter window role=main/ {
+                epoch=$0
+                sub(/^.*windowEpochMillis=/, "", epoch)
+                sub(/ .*/, "", epoch)
+                if (epoch >= start && $0 ~ /externalPressure=true/ && $0 ~ /reason=EXTERNAL_PRESSURE/ && $0 ~ /completedAttempts=([0-9]|1[0-9]) /) {
+                    found=1
+                }
+            }
+            END { exit(found ? 0 : 1) }
+        ' "$WORKER_LOG"; then
+            external_ready=1
+        fi
+        if (( handled == records && lag_rows == 0 && external_ready == 1 )); then
             break
         fi
         sleep 1
     done
-    if (( handled != records || lag_rows != 0 )); then
-        echo "Phase failed: phase=$phase handled=${handled:-0}/$records lagRows=${lag_rows:-unknown}" >&2
+    if (( handled != records || lag_rows != 0 || external_ready != 1 )); then
+        echo "Phase failed: phase=$phase handled=${handled:-0}/$records lagRows=${lag_rows:-unknown} externalReady=${external_ready:-0}" >&2
         "${compose[@]}" logs --no-color main-worker-a >&2
         return 1
     fi
@@ -84,7 +122,12 @@ run_phase() {
 }
 
 run_phase warmup 1200 500
-run_phase pressure 160 1300
+if [[ "$DEMO_MODE" != "p95" ]]; then
+    run_phase external-responses 12 500 mixed
+fi
+if [[ "$DEMO_MODE" != "external" ]]; then
+    run_phase pressure 160 1300
+fi
 run_phase recovery 1200 500
 
 "${compose[@]}" logs --no-color main-worker-a > "$WORKER_LOG" 2>&1
