@@ -1,8 +1,10 @@
 Adaptive limiter showcase evidence
 Initial limit: 16 (one main-worker pod)
-Warmup increase: 16 -> 17 at p95=540 ms, completed=64.
-Pressure decrease: 22 -> 11 at p95=1303 ms, completed=66.
-Recovery increase: 2 -> 3 at p95=504 ms, completed=20.
-Phases: warmup=1200 unique handlers, final lag rows=0, delay=500 ms, pressure=160 unique handlers, final lag rows=0, delay=1300 ms, recovery=1200 unique handlers, final lag rows=0, delay=500 ms
-Windows recorded: 34; handler start observations: 2560.
+Warmup increase: 16 -> 17 at p95=512 ms, completed=96.
+Pressure decrease: 10 -> 5 at p95=1303 ms, completed=20.
+External-response decrease: 21 -> 10 at completed=12 (<20), reason=EXTERNAL_PRESSURE.
+External outcomes observed: database-timeout, rest-503, rest-timeout.
+Recovery increase: 2 -> 3 at p95=503 ms, completed=20.
+Phases: warmup=1200 unique handlers, final lag rows=0, delay=500 ms, external-responses=12 unique handlers, final lag rows=0, delay=500 ms, pressure=160 unique handlers, final lag rows=0, delay=1300 ms, recovery=1200 unique handlers, final lag rows=0, delay=500 ms
+Windows recorded: 43; handler start observations: 2572.
 This is a per-process limit demonstration, not a cluster-wide budget or global ordering test.

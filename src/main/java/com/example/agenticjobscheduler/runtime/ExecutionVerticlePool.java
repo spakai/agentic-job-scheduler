@@ -1,5 +1,6 @@
 package com.example.agenticjobscheduler.runtime;
 
+import com.example.agenticjobscheduler.execution.ExternalPressureReporter;
 import com.example.agenticjobscheduler.execution.JobExecution;
 import com.example.agenticjobscheduler.execution.JobHandler;
 import io.vertx.core.DeploymentOptions;
@@ -50,13 +51,24 @@ final class ExecutionVerticlePool implements JobHandler {
         return execute(execution, () -> true);
     }
 
+    @Override
+    public Future<Void> execute(JobExecution execution, ExternalPressureReporter pressure) {
+        return dispatch(execution, () -> true, new AtomicLong(), pressure).completion();
+    }
+
     Future<Void> execute(JobExecution execution, BooleanSupplier eligible) {
-        return dispatch(execution, eligible, new AtomicLong()).completion();
+        return dispatch(execution, eligible, new AtomicLong(),
+                ExternalPressureReporter.NONE).completion();
     }
 
     Dispatch dispatch(JobExecution execution, BooleanSupplier eligible, AtomicLong startedAt) {
+        return dispatch(execution, eligible, startedAt, ExternalPressureReporter.NONE);
+    }
+
+    Dispatch dispatch(JobExecution execution, BooleanSupplier eligible, AtomicLong startedAt,
+                      ExternalPressureReporter pressure) {
         int index = Math.floorMod(next.getAndIncrement(), workers.size());
-        return workers.get(index).dispatch(execution, eligible, startedAt);
+        return workers.get(index).dispatch(execution, eligible, startedAt, pressure);
     }
 
     Future<Void> close() {
@@ -72,7 +84,8 @@ final class ExecutionVerticlePool implements JobHandler {
             this.handler = handler;
         }
 
-        private Dispatch dispatch(JobExecution execution, BooleanSupplier eligible, AtomicLong startedAt) {
+        private Dispatch dispatch(JobExecution execution, BooleanSupplier eligible,
+                                  AtomicLong startedAt, ExternalPressureReporter pressure) {
             Promise<Long> started = Promise.promise();
             Promise<Void> result = Promise.promise();
             context.runOnContext(ignored -> {
@@ -85,7 +98,7 @@ final class ExecutionVerticlePool implements JobHandler {
                 started.tryComplete(now);
                 Future<Void> completion;
                 try {
-                    completion = handler.execute(execution);
+                    completion = handler.execute(execution, pressure);
                 } catch (RuntimeException failure) {
                     result.tryFail(failure);
                     return;

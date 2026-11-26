@@ -277,6 +277,14 @@ actual broker acknowledgment, call `handoffAcknowledged()` with
 and must not rerun the handler. L04 supplies failure classification; the
 `KafkaWorker` performs Kafka publication and records the acknowledgment.
 
+The default `JobHandler.execute(execution, pressure)` overload keeps existing
+handlers source-compatible while allowing reviewed REST/database adapters to
+report typed `UNAVAILABLE` or `TIMEOUT` outcomes. Register only safe logical
+labels; never pass a URL, host, database name, query, payload, or exception
+message as a dependency label. A report can reduce the main process limit but
+does not release the permit, per-job gate, processing-window reservation, or
+source offset before the handler future actually settles.
+
 All state changes and commit calls run on the owner context; off-context calls
 are rejected and handler completions are marshalled back. Register fetched records
 in partition order, and use the dispatcher's `beginCommit()`/commit-result methods
@@ -373,6 +381,16 @@ the handler lines prove each load record stopped successfully.
 to concurrency 2 and one handler start per second per pod; set
 `RETRY_WORKER_CONCURRENCY` and `RETRY_WORKER_STARTS_PER_SECOND` in Compose to
 adjust them. Main workers start at 16 permits and adapt between 1 and 128.
+Register pressure dependency labels with the comma-separated
+`WORKER_PRESSURE_DEPENDENCIES` setting. Main-adaptive defaults can be overridden
+with `WORKER_ADAPTIVE_MINIMUM`, `WORKER_ADAPTIVE_MAXIMUM`,
+`WORKER_ADAPTIVE_WINDOW_MILLIS`, `WORKER_ADAPTIVE_TARGET_P95_MILLIS`,
+`WORKER_ADAPTIVE_SAMPLE_FLOOR`, `WORKER_ADAPTIVE_FAILURE_THRESHOLD`, and
+`WORKER_ADAPTIVE_RECOVERY_WINDOWS`; invalid bounds, thresholds, and labels are
+rejected at startup. The aggregate p95 and typed external-pressure triggers are
+independently enabled or disabled with
+`WORKER_ADAPTIVE_SLOW_LATENCY_ENABLED` and
+`WORKER_ADAPTIVE_EXTERNAL_PRESSURE_ENABLED` (both default to `true`).
 `docker compose down` stops only this project; it preserves Kafka data. Do not
 use `docker compose down -v` unless deleting the demo backlog is intended. The
 single-broker Compose deployment is for learning, not a production durability

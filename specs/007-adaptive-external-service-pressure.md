@@ -1,7 +1,7 @@
 # Spec 007: Adaptive handling of external-service pressure
 
-Status: **Draft — requirements and acceptance criteria proposed; implementation
-not authorized by this spec draft alone**
+Status: **Draft requirements; implementation in progress on the authorized Spec
+007 branch, with focused and broker-backed evidence recorded**
 
 Project: `agentic-job-scheduler`  
 Date: 2026-11-26
@@ -187,6 +187,8 @@ The following settings are independently bounded and role-local:
 - one-second target p95 latency;
 - 10% transient failure threshold;
 - two healthy windows required after a reduction.
+- independent enable switches for aggregate p95 slow-latency and typed external
+  pressure decisions; both default to enabled.
 
 Reject invalid values at startup. Configuration changes do not retroactively
 cancel running work. Dependency names are registered explicitly; unregistered
@@ -211,6 +213,13 @@ metric labels.
 | A12 | Metrics and logs stay bounded and sanitized. | Repeated events prove no growth in retained signal history and no payload, URL, host, query, credential, response body, or exception message in pressure metrics/logs. Registered dependency label cardinality remains bounded. |
 | A13 | Ordinary failures do not masquerade as dependency pressure. | A permanent job error, arbitrary `RuntimeException("503")`, HTTP 500 without a reviewed adapter mapping, and a non-timeout failure do not directly latch external pressure. |
 
+Current evidence: A01-A13 have corresponding unit and worker coverage, including
+capture-based log sanitation for A12. Production REST and database client
+integration remains outside this repository and therefore requires the typed
+adapter boundary at each client. See the
+[S007 task record](../docs/tasks/S007-adaptive-external-pressure.md) and
+[validation evidence](../docs/tasks/evidence/S007-validation.txt).
+
 ## 9. Verification
 
 Run focused unit tests for REST/DB classification and adaptive policy before
@@ -228,10 +237,10 @@ handler timeout does not release any local resource.
 
 ## 10. Implementation decisions intentionally deferred
 
-- Whether REST and database adapters expose the signal by a typed exception, an
-  `ExecutionOutcome`, or a callback is an API design decision for the
-  implementation increment. The contract and test-observable behavior above are
-  mandatory.
+- The implemented signal API is a per-invocation callback supplied through
+  `JobHandler`. Existing one-argument handlers remain compatible. REST and
+  database adapters classify reviewed typed outcomes before invoking that
+  callback; wrappers and exception messages are not inspected.
 - Dependency-specific concurrency pools, circuit breakers, request coalescing,
   or per-service budgets require separate capacity and fairness requirements.
 - Automatic recovery driven by service-provided `Retry-After` is not defined;

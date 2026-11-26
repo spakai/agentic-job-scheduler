@@ -1,6 +1,6 @@
 # S007: Implement adaptive external-service pressure handling
 
-Status: in progress
+Status: implemented and fully verified on the Spec 007 branch; review pending
 
 ## Scope and plan
 
@@ -95,20 +95,26 @@ Exit gate: every A01-A13 row is backed by a named test/evidence artifact or expl
 - 2026-11-26: Stage 1 started on branch `docs/spec-007-adaptive-pressure` in PR #46 at the user's direction.
 - Decided: use a typed per-invocation reporter as a default `JobHandler` overload so existing functional handlers remain source-compatible. Exception wrapping is a transport concern and is never inspected for pressure.
 - Added explicit REST and database adapter boundaries for reviewed `503`, unavailable, and deadline outcomes. Logical dependency labels are allow-listed and invocation reports are deduplicated by dependency and category.
-- `git diff --check` passes for the Stage 1 working tree. Maven tests are not yet executed because `mvn` is unavailable and both system-wide installation and an externally downloaded user-local Maven binary were denied by the environment.
+- Stage 1 classification, Stage 2 limiter policy, Stage 3 worker wiring, and Stage 4 configuration/metrics are implemented on `docs/spec-007-adaptive-pressure`.
+- Added independent `WORKER_ADAPTIVE_SLOW_LATENCY_ENABLED` and
+  `WORKER_ADAPTIVE_EXTERNAL_PRESSURE_ENABLED` switches. They default to enabled;
+  either trigger can be disabled without disabling the other or handler-deadline
+  pressure.
+- The first broker-backed A08 run reproduced a replacement-start race: a partition dispatcher used stale local capacity after one handler settled. `ImmediateJobDispatcher` now refreshes process-wide capacity after active accounting decreases and before replacement dispatch.
+- `mvn -B -ntp clean verify` passed 182 unit tests and 27 Testcontainers/Kafka integration tests.
 
 ## Evaluation
 
 | Check | Commit | Command or workflow | Result | Evidence |
 | --- | --- | --- | --- | --- |
-| A01-A03/A07/A13 classification and negative cases | working tree after `e3004d5` | `mvn -B -ntp '-Dtest=ExternalPressureSignalTest' test` | blocked: `mvn` unavailable; local installation and external download denied | `docs/tasks/S007-adaptive-external-pressure.md` and `src/test/java/com/example/agenticjobscheduler/execution/ExternalPressureSignalTest.java` |
-| A04-A07 limiter bounds, duplicate behavior, and hysteresis | pending | `mvn -B -ntp '-Dtest=AdaptiveLimiterTest' test` | not run | pending |
-| A08-A09 worker replacement starts and timeout accounting | pending | focused `KafkaWorkerIT` selectors | not run | pending |
-| A10-A11 main/retry isolation, handoff, and offset safety | pending | Docker/Testcontainers `mvn verify` | not run | pending |
-| A12 bounded, sanitized metrics | pending | focused metrics/log tests | not run | pending |
-| Unit regression suite | pending | `mvn test` | not run | pending |
-| Library artifact | pending | `mvn package` | not run | pending |
-| Broker-backed full verification | pending | `mvn verify` with Docker | not run | pending |
+| A01-A03/A07/A13 classification and negative cases | working tree from `3a88581` | `mvn -B -ntp -Dtest=ExternalPressureSignalTest test` | passed: 7 tests | `src/test/java/com/example/agenticjobscheduler/execution/ExternalPressureSignalTest.java` |
+| A04-A07 limiter bounds and hysteresis | working tree from `3a88581` | `mvn -B -ntp -Dtest=L04RetryAndLimiterTest test` | passed: 10 tests | `src/test/java/com/example/agenticjobscheduler/execution/L04RetryAndLimiterTest.java` |
+| A08 pressure replacement starts | working tree from `3a88581` | `mvn -B -ntp -Dtest=ExecutionVerticlePoolTest '-Dit.test=KafkaWorkerIT#externalPressureBlocksReplacementStartsAtReducedMainLimit' verify` | passed after race correction: 4 unit + 1 broker-backed test | `docs/tasks/evidence/S007-validation.txt` |
+| A09-A11 timeout, handoff, role isolation, and replay | working tree from `3a88581` | `mvn -B -ntp clean verify` | passed: 27 broker-backed tests, including timeout/cancellation, main/retry, handoff, offset, rebalance, and crash cases | `target/failsafe-reports/` |
+| A12 bounded metrics/configuration | working tree from `3a88581` | A08 focused integration plus `WorkerConfigTest` and `ExternalPressureSignalTest` | passed: fixed allow-list cardinality, per-invocation de-duplication, counters, config validation, and capture-based log sanitation | implementation and focused tests |
+| Unit regression suite | working tree from `3a88581` | `mvn -B -ntp clean verify` | passed: 182 tests, 0 failures/errors/skips | `target/surefire-reports/` |
+| Library artifact | working tree from `3a88581` | `mvn -B -ntp clean verify` | passed; jar produced during package phase | `target/agentic-job-scheduler-0.1.0-SNAPSHOT.jar` |
+| Broker-backed full verification | working tree from `3a88581` | `mvn -B -ntp clean verify` | passed: 27 tests, 0 failures/errors/skips | `target/failsafe-reports/` |
 
 Each planned command remains distinct from an executed result. Absence of Docker,
 an unsupported client, a skipped test, or a failed check must be recorded
@@ -116,20 +122,20 @@ without conversion into a passing claim.
 
 ## Failure analysis and correction
 
-- Observed failure and reproduction: none; planning only.
-- Classification: n/a.
-- Root cause supported by evidence: n/a.
-- Code, instruction, or tool change: if a stage fails, classify it as requirement, API compatibility, worker accounting, broker integration, or environment; correct the smallest responsible boundary and rerun the failing acceptance first.
-- Rerun and remaining uncertainty: no runs performed. REST/DB adapter API compatibility and the actual in-repository external-client surface remain unresolved until implementation begins.
+- Observed failure and reproduction: the first Docker-backed A08 run lowered `4 -> 2` but started a fifth handler immediately after one of four active handlers settled.
+- Classification: worker accounting/global-capacity integration.
+- Root cause supported by evidence: `ImmediateJobDispatcher.stopped()` dispatched a replacement using its stale per-owner capacity before `KafkaWorker` recalculated the reduced process-wide budget.
+- Code, instruction, or tool change: add an owner-capacity refresh callback after active accounting decreases and before replacement dispatch. The corrected focused integration test blocks at active use 3 and 2, then starts one replacement after active use drops below 2.
+- Rerun and remaining uncertainty: the corrected focused run and full `clean verify` pass, and the focused test now captures logs containing sensitive-payload sentinels and verifies they are absent from pressure observability. There is no in-repository production REST or database client, so adapter integration remains caller-owned.
 
 ## Handoff and review
 
-- Latest verified commit and working-tree changes: `e3004d5` is the documentation-plan base; the working tree now contains Stage 1 pressure types, registry, adapters, reporter, compatibility overload, and focused tests.
-- Completed steps: Spec 007 architecture requirements, implementation plan, and the Stage 1 source/test increment.
-- Next concrete step: run `mvn -B -ntp '-Dtest=ExternalPressureSignalTest' test` once Maven is available, then start Stage 2 limiter-policy changes.
-- Open risks/decisions and owner: runtime owner must choose the registered dependency-name vocabulary and wire reporters in `ExecutionVerticlePool`/`KafkaWorker`; no in-repository REST or database client currently exists to map automatically.
-- Reviewer findings and disposition: PR review pending.
-- PR / final outcome: Spec 007 documentation PR #46; implementation PR not created.
+- Latest verified commit and working-tree changes: `3a88581` is the remote branch base; the working tree contains Stages 1-4 source, tests, worker wiring, configuration, and bounded metrics.
+- Completed steps: typed adapter contract, limiter decrease/recovery policy, reporter marshaling, timeout latch, process-wide replacement-start enforcement, configuration, metrics, and broker-backed verification.
+- Next concrete step: review the implementation diff and commit/push only when requested.
+- Open risks/decisions and owner: handlers must explicitly register dependency labels with `WORKER_PRESSURE_DEPENDENCIES` and use reviewed adapter outcome mappings; no production REST or database client exists in this repository.
+- Reviewer findings and disposition: A08 stale-capacity race found and corrected. Full unit and broker-backed verification now pass; external-client integration review remains caller-owned.
+- PR / final outcome: Spec 007 PR #46 is the branch origin; implementation remains uncommitted in the working tree.
 
 ## Learning check
 

@@ -69,6 +69,7 @@ public final class ImmediateJobDispatcher {
     private int activeHandlers;
     private boolean dispatching;
     private boolean ownershipRevoked;
+    private Runnable beforeReplacementDispatch = () -> { };
 
     public ImmediateJobDispatcher(Context context, String topic, Set<Integer> assignment,
                                   int capacity, int maxRetainedRecords, JobHandler handler) {
@@ -192,6 +193,15 @@ public final class ImmediateJobDispatcher {
         dispatch();
     }
 
+    /**
+     * Installs an owner-level capacity refresh that runs after active accounting
+     * decreases but before this dispatcher can start replacement work.
+     */
+    public void beforeReplacementDispatch(Runnable callback) {
+        requireContext();
+        beforeReplacementDispatch = Objects.requireNonNull(callback, "callback");
+    }
+
     public int retainedRecords() {
         requireContext();
         return tracker.retainedRecords();
@@ -306,6 +316,7 @@ public final class ImmediateJobDispatcher {
         } else {
             submission.state = State.HANDOFF_PENDING;
         }
+        beforeReplacementDispatch.run();
         dispatch();
         // Notify after accounting and dispatch; observers cannot see a half-applied transition.
         submission.stopped.complete(succeeded ? HandlerResult.SUCCESS : HandlerResult.FAILURE);

@@ -3,12 +3,14 @@
 Snapshot: 2026-11-26, HTTP admission API implemented for [Spec 006](specs/006-http-admission-api.md);
 H03–H06 runtime hardening and consumer/execution verticle separation remain
 implemented (see the consumer worker verticles task record).
-[Spec 007](specs/007-adaptive-external-service-pressure.md) proposes the next
+[Spec 007](specs/007-adaptive-external-service-pressure.md) defines the
 adaptive-limiter extension for typed REST/database `503`, unavailable, and
-timeout signals; that extension is documented here but is not yet implemented.
-[Spec 002](specs/002-kafka-job-scheduling.md) is the implemented requirements
-and architecture authority; Spec 007 is a draft extension until adopted and
-implemented. This document follows the [arc42](https://arc42.org) template and
+timeout signals. Its core signal, limiter, worker, configuration, and metrics
+path is implemented and verified on the Spec 007 branch; production client
+adapters remain caller-owned integration work.
+[Spec 002](specs/002-kafka-job-scheduling.md) remains the requirements and
+architecture authority; Spec 007 is a draft extension with implementation in
+progress. This document follows the [arc42](https://arc42.org) template and
 records decisions as ADRs (section 9).
 [Spec 001](specs/001-job-lifecycle.md) is historical.
 
@@ -31,7 +33,7 @@ scheduling state topic, or RocksDB index. EDR is deferred. The runtime hardening
 H03–H06: enforce the process-wide active-handler limit, allocate replacement
 capacity only to runnable job-lane heads, refuse mismatched topic counts, and
 preserve correct new-group versus invalid-offset startup semantics.
-Spec 007 refines the proposed main-limiter behavior so an explicitly classified
+Spec 007 refines the main-limiter behavior so an explicitly classified
 external dependency pressure signal can lower capacity without waiting for the
 ordinary sample floor, then recover conservatively after healthy windows.
 
@@ -95,7 +97,7 @@ ordinary sample floor, then recover conservatively after healthy windows.
 | --- | --- | --- |
 | Kafka broker | Kafka protocol; idempotent producer (`acks=all`), manual-commit consumers | Local Compose: single KRaft broker, RF 1, persistent volume. Deployment baseline: 3 brokers, RF 3, min ISR 2 |
 | Job handler | `JobHandler` future-returning SPI | Demo handler only; completes only after work has stopped |
-| External REST services and databases | Handler-owned clients/adapters | May report typed unavailable/timeout pressure to the main limiter under proposed Spec 007; they are not scheduler state stores |
+| External REST services and databases | Handler-owned clients/adapters | Report reviewed typed unavailable/timeout pressure to the main limiter under Spec 007; they are not scheduler state stores |
 | HTTP admission | `POST /v1/jobs`; health and metrics endpoints | Separate process/JVM, one HTTP verticle and one Kafka producer |
 | Docker/Compose | `compose.yaml`, `Dockerfile` | Roles `http-api`, main/retry workers, tool profile `sample-producer` |
 
@@ -135,7 +137,7 @@ and external-effect fencing.
 | L06 | `ProcessingWindow`, `ProcessingWindowKafkaController`, `KafkaWorker` runtime | Bound intake, run main/retry roles, publish acknowledged handoffs, commit safe offsets | 5 window unit + 19 dispatcher + 5 limiter + 2 Kafka integration |
 | Consumer/execution separation | `WorkerRuntime`, `ConsumerVerticle`, `ExecutionVerticlePool` | Keep Kafka ownership and settlement in one consumer verticle; dispatch nonblocking handler calls to separate execution contexts | 3 pool unit + 6 focused Kafka cases |
 | HTTP admission | `HttpAdmissionVerticle`, `KafkaJobPublisher`, `AdmissionLimiter` | Strictly map HTTP requests to canonical main records and return `202` only after broker acknowledgment | focused contract + broker integration tests |
-| Spec 007 proposal | external-pressure adapter + bounded adaptive signal path | Classify registered REST/DB `503`/unavailable/timeout outcomes without string matching; latch pressure for the main limiter | A01–A13 planned; no implementation evidence |
+| Spec 007 | external-pressure adapter + bounded adaptive signal path | Classify registered REST/DB `503`/unavailable/timeout outcomes without string matching; latch pressure for the main limiter | focused unit and full broker verification; final log-capture sanitation pending |
 
 These are executed cases, including parameterized inputs. L03 tests run real
 Vert.x event loops with controlled handler futures; crash/replay tests use a
@@ -831,8 +833,8 @@ with explicit spec and recovery-contract changes.
 
 ### 6.9 Proposed external-service pressure path (Spec 007)
 
-**Status:** architecture extension proposed; A01–A13 are not implemented or
-evidenced yet.
+**Status:** core extension implemented and verified on the Spec 007 branch;
+production REST/database client wiring remains caller-owned.
 
 The handler-owned REST/DB adapters are responsible for translating typed client
 outcomes into pressure events. The worker does not inspect exception strings,
@@ -877,10 +879,11 @@ must confirm that execution stopped before failure routing can publish retry or
 DLQ work. Main and retry budgets remain independent, and the accepted duplicate
 effects/replay limitations remain unchanged.
 
-The pressure path must expose bounded counters for dependency/category and
-adaptive-decision gauges/reasons, while omitting URLs, hosts, payloads, queries,
-credentials, and response bodies. The component-level adapter API remains a
-deliberately deferred implementation choice in Spec 007.
+The pressure path exposes bounded counters for dependency/category and
+adaptive-decision reasons, while omitting URLs, hosts, payloads, queries,
+credentials, and response bodies. `JobHandler` supplies a per-invocation
+reporter; reviewed REST/database adapters classify typed outcomes before
+reporting and do not inspect exception text.
 
 ---
 
@@ -901,7 +904,7 @@ deliberately deferred implementation choice in Spec 007.
                               concurrency max 128       concurrency 2, 1 start/s
                               separate execution pool   separate execution pool
                               |
-                              +--> REST/DB adapters may emit typed pressure (proposed)
+                              +--> REST/DB adapters emit typed pressure
 ```
 
 `WorkerMain` uses `WorkerRuntime` to deploy exactly one `ConsumerVerticle`
@@ -933,7 +936,7 @@ Sustained broker outage behavior has not been tested.
   monitor lag and oldest-unprocessed age.
 - **Concurrency model.** All queue, completion, and offset mutations are
   confined to the owner Vert.x context; commits are serialized per worker.
-- **Downstream capacity feedback (proposed).** Main-worker handler integrations
+- **Downstream capacity feedback.** Main-worker handler integrations
   may attach typed `UNAVAILABLE` or `TIMEOUT` signals for registered REST or
   database dependencies. These signals are process-local policy input; they do
   not create a database/state-store dependency or a cluster-wide limit.
@@ -1082,10 +1085,11 @@ keys and values, not the JVM's entire memory footprint.
 
 ### ADR 9: Adaptive limiter for main; token bucket for retry
 
-- **Status:** Accepted for the Spec 002 policy; Spec 007 extension proposed.
+- **Status:** Accepted for the Spec 002 policy; Spec 007 core extension
+  implemented and verified on its branch.
 - **Decision:** Main concurrency adapts from five-second latency/failure windows (1–128). Retry uses fixed low concurrency and a one-start-per-second per-pod token bucket.
-- **Consequences:** Limits pressure on downstream targets while allowing healthy main traffic to use more capacity. Controlled worker-level B07/B13 tests now exist in `KafkaWorkerIT`; executed results are recorded in the [L06 task record](docs/tasks/L06-backpressure-recovery.md#evaluation). These cases do not establish every Spec 007 path: typed REST/DB pressure classification, zero-sample external decreases, duplicate suppression, and hysteretic recovery remain unimplemented.
-- **Proposed Spec 007 extension:** Registered handler adapters emit typed
+- **Consequences:** Limits pressure on downstream targets while allowing healthy main traffic to use more capacity. Controlled worker-level B07/B13 and Spec 007 pressure tests now pass; executed results are recorded in the [L06](docs/tasks/L06-backpressure-recovery.md#evaluation) and [S007](docs/tasks/S007-adaptive-external-pressure.md#evaluation) task records. Production client mapping remains caller-owned.
+- **Spec 007 extension:** Registered handler adapters emit typed
   `UNAVAILABLE` or `TIMEOUT` events for REST/database outcomes. Explicit
   pressure can halve the main process limit once in the current window without
   the 20-completion floor. Recovery requires two healthy windows before adding
@@ -1114,9 +1118,9 @@ completed attempts, excluding validation and permanent errors:
 
 A decrease must stop new starts until usage allows; it must not cancel existing
 handlers just to meet the smaller limit. Handler latency excludes queue wait.
-Under the Spec 007 proposal, explicit external pressure and expiry of the
+Under Spec 007, explicit external pressure and expiry of the
 worker handler deadline are additionally eligible without the sample floor.
-After a decrease, the proposed policy requires two qualifying healthy windows
+After a decrease, the policy requires two qualifying healthy windows
 before growth; any later pressure resets that recovery count.
 
 **Retry workers (B07).** The defaults are two concurrent handlers and one start
@@ -1191,8 +1195,8 @@ handling or the required DLQ acknowledgment (B01/B05/B17).
 | Broker acknowledgment remains ambiguous | `503`; no second application-level append; retry may duplicate | HTTP verticle controlled-future test |
 | HTTP overload | `429` before an unbounded queue forms | `AdmissionLimiterTest`, HTTP saturation test |
 | Slow/incomplete upload | `408` and admission capacity is released | bounded request-read timer in `HttpAdmissionVerticle` |
-| Proposed: external REST `503` or DB/REST timeout with no completed samples | Shared main limit halves once; running work remains accounted; recovery waits for two healthy windows | Spec 007 A01–A09 planned; no evidence yet |
-| Proposed: generic failure text or unrelated HTTP/DB error | Does not lower capacity as external pressure | Spec 007 A13 planned; no evidence yet |
+| External REST `503` or DB/REST timeout with no completed samples | Shared main limit halves once; running work remains accounted; recovery waits for two healthy windows | Spec 007 focused and broker-backed tests pass; see the S007 record |
+| Generic failure text or unrelated HTTP/DB error | Does not lower capacity as external pressure | Spec 007 A13 focused negative cases pass |
 
 ---
 
@@ -1203,7 +1207,7 @@ handling or the required DLQ acknowledgment (B01/B05/B17).
 | Rebalance ownership and stale-callback behavior in the live worker | `KafkaWorkerIT` covers moved-owner replay/stale handlers; `KafkaWorkerCooperativeIT` covers retained-lane continuity for both roles. Full lifecycle gaps remain in Spec 005 C06–C11 |
 | B15: out-of-order completion across independent Kafka partitions at worker level | `mainWorkerCommitsIndependentPartitionWhileEarlierOffsetIsRunning` covers independent progress; offset gaps and prefix ordering also have tracker unit tests |
 | B07/B13: controlled runtime limiter and retry-rate behavior | Worker-level rate/concurrency and adaptive-window tests pass; retired-owner permit accounting remains C10 work |
-| Spec 007: typed external-service pressure | Draft only. REST/DB classification, zero-sample pressure decisions, duplicate suppression, and recovery hysteresis are not implemented or evidenced |
+| Spec 007: typed external-service pressure | Core signal, limiter, worker, configuration, and bounded metric path implemented; `clean verify` passed 182 unit and 27 broker-backed tests. Production client wiring remains caller-owned |
 | B08: all handler failures exhaust remainingAttempts before DLQ | `handlerFailuresConsumeRemainingBudgetBeforeDlq`; see [R01](docs/tasks/R01-remaining-attempts.md) for current evidence |
 | B09/B20: replay after real worker process loss | Covered by `KafkaWorkerCrashIT` (child JVM SIGKILLed mid-handler; source uncommitted; replacement replays once and commits). Compose-level kill demo not run |
 | B19: confirmed and unconfirmed handler cancellation | Worker timeout, unconfirmed cancellation, and shutdown-wait tests pass; forced Kubernetes grace remains pending |
