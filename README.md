@@ -31,6 +31,8 @@ through `POST /v1/jobs`.
 The [adaptive limiter demo](demo_adaptive_limiter.md) runs healthy, slow, and
 recovery phases against one main-worker pod and records per-window limit,
 latency, and observed handler-concurrency evidence.
+[Spec 007](specs/007-adaptive-external-service-pressure.md) defines the proposed
+typed handling for external REST/DB `503`, unavailable, and timeout signals.
 
 ## Kafka polling and event-loop behavior
 
