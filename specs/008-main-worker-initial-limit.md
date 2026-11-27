@@ -25,7 +25,7 @@ adaptive runtime bounds or decision rules.
 ### User Story 1 - Start the main worker conservatively (Priority: P1)
 
 An operator starts a main worker without specifying its initial concurrency.
-The worker starts with four permits and remains free to adapt as before.
+The worker starts with one permit and remains free to adapt as before.
 
 **Independent test**: Create a main-worker configuration without a concurrency
 override and verify its initial limit and existing adaptive behavior.
@@ -33,7 +33,7 @@ override and verify its initial limit and existing adaptive behavior.
 **Acceptance scenarios**:
 
 1. **Given** `WORKER_CONCURRENCY` is unset, **when** a main worker starts,
-   **then** its initial concurrency is 4.
+   **then** its initial concurrency is 1.
 2. **Given** the adaptive runtime maximum permits it and qualifying healthy
    windows occur, **when** the limit reaches 16, **then** it may grow beyond 16.
 3. **Given** the default configuration of a retry worker, **when** it starts,
@@ -65,6 +65,9 @@ without starting a worker workload.
 - Explicit overrides in Compose or other deployment configurations may mask
   the new worker default; assess them and update only those that should use
   the new default.
+- At one permit, a workload may not reach the 20-completion sample floor in a
+  five-second window, so the existing policy can hold the limit at 1 even
+  with backlog. Assess this risk without changing the policy in this spec.
 - A decrease never cancels already-running handlers. Each worker's limit is
   per process, not a cluster-wide budget.
 
@@ -73,7 +76,7 @@ without starting a worker workload.
 ### Functional Requirements
 
 - **REQ-001**: An unset `WORKER_CONCURRENCY` MUST produce an initial
-  main-worker limit of 4.
+  main-worker limit of 1.
 - **REQ-002**: The main-worker initial limit MUST be a whole number from 1
   through 16 inclusive and MUST also lie within the configured adaptive
   minimum and maximum.
@@ -101,7 +104,7 @@ without starting a worker workload.
 
 ### Measurable Outcomes
 
-- **SC-001**: An unset main-worker setting starts at 4; 1, 4, and 16 are
+- **SC-001**: An unset main-worker setting starts at 1; 1, 4, and 16 are
   accepted with compatible bounds, while 0, 17, empty, non-integer, and
   incompatible values are rejected explicitly.
 - **SC-002**: Focused evidence shows adaptive growth can exceed 16 under a
